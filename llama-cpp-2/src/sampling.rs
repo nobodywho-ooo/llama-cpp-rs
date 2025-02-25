@@ -7,6 +7,7 @@ use std::fmt::{Debug, Formatter};
 use crate::context::LlamaContext;
 use crate::model::LlamaModel;
 use crate::token::data_array::LlamaTokenDataArray;
+use crate::token::logit_bias::LlamaLogitBias;
 use crate::token::LlamaToken;
 
 /// A safe wrapper around `llama_sampler`.
@@ -60,6 +61,26 @@ impl LlamaSampler {
         self.accept_many(tokens);
         self
     }
+
+    /// Resets the internal state of the sampler.
+    /// 
+    /// This can be useful when you want to start fresh with a sampler without creating a new instance.
+    pub fn reset(&mut self) {
+        unsafe {
+            llama_cpp_sys_2::llama_sampler_reset(self.sampler);
+        }
+    }
+
+    /// Gets the random seed used by this sampler.
+    /// 
+    /// Returns:
+    /// - For random samplers (dist, mirostat, mirostat_v2): returns their current seed
+    /// - For sampler chains: returns the first non-default seed found in reverse order
+    /// - For all other samplers: returns 0xFFFFFFFF
+    #[must_use]
+    pub fn get_seed(&self) -> u32 {
+        unsafe { llama_cpp_sys_2::llama_sampler_get_seed(self.sampler) }
+    }    
 
     /// Combines a list of samplers into a single sampler that applies each component sampler one
     /// after another.
@@ -190,6 +211,37 @@ impl LlamaSampler {
         Self { sampler }
     }
 
+    /// Top-nσ sampling as described in academic paper "Top-nσ: Not All Logits Are You Need" 
+    /// <https://arxiv.org/pdf/2411.07641>
+    ///
+    /// This method filters logits by selecting only those within *n* standard deviations of the mean.
+    /// 
+    /// # Parameters
+    /// - `n`: Number of standard deviations from the mean to include in sampling
+    ///
+    /// # Example
+    /// ```rust
+    /// use llama_cpp_2::sampling::LlamaSampler;
+    /// use llama_cpp_2::token::{
+    ///     LlamaToken,
+    ///     data::LlamaTokenData,
+    ///     data_array::LlamaTokenDataArray
+    /// };
+    ///
+    /// let mut data_array = LlamaTokenDataArray::new(vec![
+    ///     LlamaTokenData::new(LlamaToken(0), 0.0, 0.0),
+    ///     LlamaTokenData::new(LlamaToken(1), 1.0, 0.0), 
+    ///     LlamaTokenData::new(LlamaToken(2), 2.0, 0.0),
+    /// ], false);
+    ///
+    /// data_array.apply_sampler(&mut LlamaSampler::top_n_sigma(2.0));
+    /// ```
+    #[must_use]
+    pub fn top_n_sigma(n: f32) -> Self {
+        let sampler = unsafe { llama_cpp_sys_2::llama_sampler_init_top_n_sigma(n) };
+        Self { sampler }
+    }
+
     /// Locally Typical Sampling implementation described in the paper <https://arxiv.org/abs/2202.00666>.
     #[must_use]
     pub fn typical(p: f32, min_keep: usize) -> Self {
@@ -237,6 +289,49 @@ impl LlamaSampler {
         };
         Self { sampler }
     }
+
+    /// Lazy grammar sampler, introduced in <https://github.com/ggerganov/llama.cpp/pull/9639>
+    ///
+    /// This sampler enforces grammar rules only when specific trigger words or tokens are encountered.
+    ///
+    /// # Panics
+    /// - If `grammar_str` or `grammar_root` contain null bytes
+    /// - If any trigger word contains null bytes
+    #[must_use]
+    pub fn grammar_lazy(
+        model: &LlamaModel,
+        grammar_str: &str,
+        grammar_root: &str,
+        trigger_words: impl IntoIterator<Item = impl AsRef<[u8]>>,
+        trigger_tokens: &[LlamaToken],
+    ) -> Self {
+        let grammar_str = CString::new(grammar_str).unwrap();
+        let grammar_root = CString::new(grammar_root).unwrap();
+        
+        let trigger_word_cstrings: Vec<CString> = trigger_words
+            .into_iter()
+            .map(|word| CString::new(word.as_ref()).unwrap())
+            .collect();
+            
+        let mut trigger_word_ptrs: Vec<*const c_char> = trigger_word_cstrings
+            .iter()
+            .map(|cs| cs.as_ptr())
+            .collect();
+    
+        let sampler = unsafe {
+            llama_cpp_sys_2::llama_sampler_init_grammar_lazy(
+                model.vocab_ptr(),
+                grammar_str.as_ptr(),
+                grammar_root.as_ptr(),
+                trigger_word_ptrs.as_mut_ptr(),
+                trigger_word_ptrs.len(),
+                trigger_tokens.as_ptr().cast(),
+                trigger_tokens.len(),
+            )
+        };
+        
+        Self { sampler }
+    }    
 
     /// DRY sampler, designed by p-e-w, as described in:
     /// <https://github.com/oobabooga/text-generation-webui/pull/5677>, porting Koboldcpp
@@ -376,6 +471,42 @@ impl LlamaSampler {
         let sampler = unsafe { llama_cpp_sys_2::llama_sampler_init_greedy() };
         Self { sampler }
     }
+
+    /// Creates a sampler that applies bias values to specific tokens during sampling.
+    ///
+    /// # Parameters
+    /// - ``n_vocab``: [`LlamaModel::n_vocab`]
+    /// - ``biases``: Slice of [`LlamaLogitBias`] values specifying token-bias pairs
+    ///
+    /// # Example
+    /// ```rust
+    /// use llama_cpp_2::token::{LlamaToken, logit_bias::LlamaLogitBias};
+    /// use llama_cpp_2::sampling::LlamaSampler;
+    ///
+    /// let biases = vec![
+    ///     LlamaLogitBias::new(LlamaToken(1), 1.5),  // Increase probability of token 1
+    ///     LlamaLogitBias::new(LlamaToken(2), -1.0), // Decrease probability of token 2
+    /// ];
+    ///
+    /// // Assuming vocab_size of 32000
+    /// let sampler = LlamaSampler::logit_bias(32000, &biases);
+    /// ```
+    #[must_use]
+    pub fn logit_bias(n_vocab: i32, biases: &[LlamaLogitBias]) -> Self {
+
+        let data = biases.as_ptr().cast::<llama_cpp_sys_2::llama_logit_bias>();
+        
+        let sampler = unsafe {
+            llama_cpp_sys_2::llama_sampler_init_logit_bias(
+                n_vocab,
+                biases.len() as i32,
+                data,
+            )
+        };
+        
+        Self { sampler }
+    }
+
 }
 
 impl Drop for LlamaSampler {

@@ -4,7 +4,7 @@ use std::num::NonZeroU16;
 use std::os::raw::c_int;
 use std::path::Path;
 use std::ptr::NonNull;
-use std::str::{FromStr, Utf8Error};
+use std::str::Utf8Error;
 
 use crate::context::params::LlamaContextParams;
 use crate::context::LlamaContext;
@@ -47,7 +47,7 @@ impl LlamaChatTemplate {
     /// Create a new template from a string. This can either be the name of a llama.cpp [chat template](https://github.com/ggerganov/llama.cpp/blob/8a8c4ceb6050bd9392609114ca56ae6d26f5b8f5/src/llama-chat.cpp#L27-L61)
     /// like "chatml" or "llama3" or an actual Jinja template for llama.cpp to interpret.
     pub fn new(template: &str) -> Result<Self, std::ffi::NulError> {
-        Ok(Self(CString::from_str(template)?))
+        Ok(Self(CString::new(template)?))
     }
 
     /// Accesses the template as a c string reference.
@@ -90,6 +90,15 @@ impl LlamaChatMessage {
             content: CString::new(content)?,
         })
     }
+}
+
+/// The Rope type that's used within the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RopeType {
+    Norm,
+    NeoX,
+    MRope,
+    Vision,
 }
 
 /// How to determine if we should prepend a bos token to tokens
@@ -444,6 +453,50 @@ impl LlamaModel {
     #[must_use]
     pub fn n_embd(&self) -> c_int {
         unsafe { llama_cpp_sys_2::llama_n_embd(self.model.as_ptr()) }
+    }
+
+    /// Returns the total size of all the tensors in the model in bytes.
+    pub fn size(&self) -> u64 {
+        unsafe { llama_cpp_sys_2::llama_model_size(self.model.as_ptr()) }
+    }
+
+    /// Returns the number of parameters in the model.
+    pub fn n_params(&self) -> u64 {
+        unsafe { llama_cpp_sys_2::llama_model_n_params(self.model.as_ptr()) }
+    }
+
+    /// Returns whether the model is a recurrent network (Mamba, RWKV, etc)
+    pub fn is_recurrent(&self) -> bool {
+        unsafe { llama_cpp_sys_2::llama_model_is_recurrent(self.model.as_ptr()) }
+    }
+
+    /// Returns the number of layers within the model.
+    pub fn n_layer(&self) -> u32 {
+        // It's never possible for this to panic because while the API interface is defined as an int32_t,
+        // the field it's accessing is a uint32_t.
+        u32::try_from(unsafe { llama_cpp_sys_2::llama_model_n_layer(self.model.as_ptr()) }).unwrap()
+    }
+
+    /// Returns the number of attention heads within the model.
+    pub fn n_head(&self) -> u32 {
+        // It's never possible for this to panic because while the API interface is defined as an int32_t,
+        // the field it's accessing is a uint32_t.
+        u32::try_from(unsafe { llama_cpp_sys_2::llama_model_n_head(self.model.as_ptr()) }).unwrap()
+    }
+
+    /// Returns the rope type of the model.
+    pub fn rope_type(&self) -> Option<RopeType> {
+        match unsafe { llama_cpp_sys_2::llama_model_rope_type(self.model.as_ptr()) } {
+            llama_cpp_sys_2::LLAMA_ROPE_TYPE_NONE => None,
+            llama_cpp_sys_2::LLAMA_ROPE_TYPE_NORM => Some(RopeType::Norm),
+            llama_cpp_sys_2::LLAMA_ROPE_TYPE_NEOX => Some(RopeType::NeoX),
+            llama_cpp_sys_2::LLAMA_ROPE_TYPE_MROPE => Some(RopeType::MRope),
+            llama_cpp_sys_2::LLAMA_ROPE_TYPE_VISION => Some(RopeType::Vision),
+            rope_type => {
+                tracing::error!(rope_type = rope_type, "Unexpected rope type from llama.cpp");
+                None
+            }
+        }
     }
 
     fn get_chat_template_impl(
