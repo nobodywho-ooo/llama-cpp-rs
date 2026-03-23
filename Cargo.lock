@@ -1550,9 +1550,9 @@ dependencies = [
 
 [[package]]
 name = "llguidance"
-version = "1.6.1"
+version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd6bd9b883ab54097b0651668e5b590be1c7ca906500db40d4de74522382e011"
+checksum = "586ccb282d83fe337ddad2e28bb11bb258a462caa80e117fc76a6c73dac919e4"
 dependencies = [
  "anyhow",
  "derivre",
