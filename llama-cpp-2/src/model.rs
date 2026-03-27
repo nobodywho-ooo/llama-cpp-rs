@@ -653,6 +653,14 @@ impl LlamaModel {
         unsafe { llama_cpp_sys_2::llama_model_is_recurrent(self.model.as_ptr()) }
     }
 
+    /// Returns whether the model is a hybrid network (Jamba, Granite, Qwen3xx, etc)
+    ///
+    /// Hybrid models have both attention layers and recurrent/SSM layers.
+    /// They require special handling for state checkpointing.
+    pub fn is_hybrid(&self) -> bool {
+        unsafe { llama_cpp_sys_2::llama_model_is_hybrid(self.model.as_ptr()) }
+    }
+
     /// Returns the number of layers within the model.
     pub fn n_layer(&self) -> u32 {
         // It's never possible for this to panic because while the API interface is defined as an int32_t,
