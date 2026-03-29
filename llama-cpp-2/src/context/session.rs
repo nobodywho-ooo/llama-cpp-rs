@@ -5,6 +5,42 @@ use crate::token::LlamaToken;
 use std::ffi::{CString, NulError};
 use std::path::{Path, PathBuf};
 
+/// Flags for state sequence operations.
+///
+/// These flags control what parts of the state are included when saving/restoring
+/// sequence state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LlamaStateSeqFlags(pub(crate) llama_cpp_sys_2::llama_state_seq_flags);
+
+impl LlamaStateSeqFlags {
+    /// Work only with partial states, such as SWA KV cache or recurrent cache (e.g. Mamba).
+    ///
+    /// This flag is useful when you only want to save/restore the recurrent state
+    /// without affecting the KV cache.
+    pub const PARTIAL_ONLY: LlamaStateSeqFlags = LlamaStateSeqFlags(1);
+
+    /// Create an empty flags set.
+    pub const fn empty() -> LlamaStateSeqFlags {
+        LlamaStateSeqFlags(0)
+    }
+
+    /// Get the raw flags value.
+    pub const fn bits(&self) -> u32 {
+        self.0
+    }
+
+    /// Check if a flag is set.
+    pub const fn contains(&self, other: LlamaStateSeqFlags) -> bool {
+        (self.0 & other.0) != 0
+    }
+}
+
+impl Default for LlamaStateSeqFlags {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 /// Failed to save a sequence state file
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]
 pub enum SaveSeqStateError {
@@ -414,5 +450,93 @@ impl LlamaContext<'_> {
     /// help wanted: not entirely sure what the safety requirements are here.
     pub unsafe fn set_state_data(&mut self, src: &[u8]) -> usize {
         unsafe { llama_cpp_sys_2::llama_set_state_data(self.context.as_ptr(), src.as_ptr()) }
+    }
+
+    /// Get the size of the state for a single sequence with optional flags.
+    ///
+    /// This is the extended version that supports flags for partial state operations.
+    ///
+    /// # Parameters
+    ///
+    /// * `seq_id` - The sequence ID to get the state size for.
+    /// * `flags` - Optional flags (e.g., [`LlamaStateSeqFlags::PARTIAL_ONLY`]).
+    ///
+    /// # Returns
+    ///
+    /// The size in bytes needed to store the sequence state.
+    #[must_use]
+    pub fn state_seq_get_size_ext(&self, seq_id: i32, flags: LlamaStateSeqFlags) -> usize {
+        unsafe {
+            llama_cpp_sys_2::llama_state_seq_get_size_ext(self.context.as_ptr(), seq_id, flags.0)
+        }
+    }
+
+    /// Copy the state of a single sequence into the specified buffer with optional flags.
+    ///
+    /// This is the extended version that supports flags for partial state operations.
+    ///
+    /// # Parameters
+    ///
+    /// * `dest` - Destination buffer to copy state into.
+    /// * `seq_id` - The sequence ID to get the state for.
+    /// * `flags` - Optional flags (e.g., [`LlamaStateSeqFlags::PARTIAL_ONLY`]).
+    ///
+    /// # Safety
+    ///
+    /// Destination needs to have allocated enough memory.
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes copied.
+    pub unsafe fn state_seq_get_data_ext(
+        &self,
+        dest: *mut u8,
+        seq_id: i32,
+        flags: LlamaStateSeqFlags,
+    ) -> usize {
+        unsafe {
+            llama_cpp_sys_2::llama_state_seq_get_data_ext(
+                self.context.as_ptr(),
+                dest,
+                usize::MAX,
+                seq_id,
+                flags.0,
+            )
+        }
+    }
+
+    /// Set the state for a single sequence from the specified buffer with optional flags.
+    ///
+    /// This is the extended version that supports flags for partial state operations.
+    /// Useful for restoring only the recurrent/partial state without affecting the KV cache.
+    ///
+    /// # Parameters
+    ///
+    /// * `src` - Source buffer containing the state data.
+    /// * `dest_seq_id` - The destination sequence ID to load the state into.
+    /// * `flags` - Optional flags (e.g., [`LlamaStateSeqFlags::PARTIAL_ONLY`]).
+    ///
+    /// # Safety
+    ///
+    /// The source buffer must contain valid state data.
+    ///
+    /// # Returns
+    ///
+    /// Positive on success, zero on failure.
+    pub unsafe fn state_seq_set_data_ext(
+        &mut self,
+        src: &[u8],
+        dest_seq_id: i32,
+        flags: LlamaStateSeqFlags,
+    ) -> bool {
+        unsafe {
+            llama_cpp_sys_2::llama_state_seq_set_data_ext(
+                self.context.as_ptr(),
+                src.as_ptr(),
+                src.len(),
+                dest_seq_id,
+                flags.0,
+            ) > 0
+        }
     }
 }

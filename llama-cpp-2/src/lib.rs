@@ -38,6 +38,8 @@ pub mod timing;
 pub mod token;
 pub mod token_type;
 
+pub use crate::context::session::LlamaStateSeqFlags;
+
 pub(crate) fn status_is_ok(status: llama_cpp_sys_2::llama_rs_status) -> bool {
     status == llama_cpp_sys_2::LLAMA_RS_STATUS_OK
 }
