@@ -339,6 +339,32 @@ pub fn json_schema_to_grammar_value(schema: &serde_json::Value) -> Result<String
     json_schema_to_grammar(&schema_json)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{json_schema_to_grammar, json_schema_to_grammar_value};
+    use serde_json::json;
+
+    #[test]
+    fn json_schema_value_helper_matches_string_api() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "city": { "type": "string" },
+                "unit": { "enum": ["c", "f"] }
+            },
+            "required": ["city"]
+        });
+
+        let from_value =
+            json_schema_to_grammar_value(&schema).expect("schema value conversion should succeed");
+        let from_string = json_schema_to_grammar(&schema.to_string())
+            .expect("string-based schema conversion should succeed");
+
+        assert_eq!(from_value, from_string);
+        assert!(from_value.contains("root ::="));
+    }
+}
+
 /// An error that can occur when converting a token to a string.
 #[derive(Debug, thiserror::Error, Clone)]
 #[non_exhaustive]

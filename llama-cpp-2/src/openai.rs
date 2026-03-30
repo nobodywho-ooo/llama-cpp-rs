@@ -187,3 +187,55 @@ impl Drop for ChatParseStateOaicompat {
         unsafe { llama_cpp_sys_2::llama_rs_chat_parse_state_free_oaicompat(self.state.as_ptr()) };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{FunctionDefinition, ToolDefinition, ToolType};
+    use serde_json::json;
+
+    #[test]
+    fn function_tool_serializes_to_openai_shape() {
+        let tool = ToolDefinition::function(
+            FunctionDefinition::new(
+                "get_weather",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "location": { "type": "string" }
+                    },
+                    "required": ["location"]
+                }),
+            )
+            .with_description("Look up the current weather")
+            .with_strict(true),
+        );
+
+        let value = serde_json::to_value(&tool).expect("tool definition should serialize");
+        assert_eq!(
+            value,
+            json!({
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Look up the current weather",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "location": { "type": "string" }
+                        },
+                        "required": ["location"]
+                    },
+                    "strict": true
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn tool_type_defaults_to_function() {
+        let tool =
+            ToolDefinition::function(FunctionDefinition::new("noop", json!({ "type": "object" })));
+
+        assert_eq!(tool.r#type, ToolType::Function);
+    }
+}
