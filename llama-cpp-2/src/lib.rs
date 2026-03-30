@@ -8,6 +8,7 @@
 //! # Examples
 //!
 //! - [simple](https://github.com/utilityai/llama-cpp-rs/tree/main/examples/simple)
+//! - [tools](https://github.com/utilityai/llama-cpp-rs/tree/main/examples/tools)
 //!
 //! # Feature Flags
 //!

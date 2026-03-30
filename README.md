@@ -47,6 +47,8 @@ Run the tools example (add `--features cuda` if you have a cuda gpu)
 cargo run --release --example tools -- hf-model TheBloke/Llama-2-7B-GGUF llama-2-7b.Q4_K_M.gguf
 ```
 
+The tool-calling path now has typed Rust helpers in `llama_cpp_2::openai`, including `FunctionDefinition`, `ToolDefinition`, and `LlamaModel::apply_chat_template_with_tools`, plus `json_schema_to_grammar_value` for direct schema-to-grammar conversion.
+
 Run the OpenAI Style Completions Server (add `--features cuda` if you have a cuda gpu)
 
 ```bash

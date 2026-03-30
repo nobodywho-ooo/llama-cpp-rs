@@ -11,6 +11,7 @@ use llama_cpp_2::model::Special;
 use llama_cpp_2::model::{
     AddBos, GrammarTriggerType, LlamaChatMessage, LlamaChatTemplate, LlamaModel,
 };
+use llama_cpp_2::openai::{FunctionDefinition, ToolDefinition};
 use llama_cpp_2::sampling::LlamaSampler;
 use serde_json::json;
 use std::collections::HashSet;
@@ -90,32 +91,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?,
     ];
 
-    let tools_json = json!([
-        {
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "description": "Fetch current weather by city.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "city": { "type": "string", "description": "City name." },
-                        "unit": { "type": "string", "enum": ["c", "f"] }
-                    },
-                    "required": ["city"]
-                }
-            }
-        }
-    ])
-    .to_string();
+    let tools = vec![ToolDefinition::function(
+        FunctionDefinition::new(
+            "get_weather",
+            json!({
+                "type": "object",
+                "properties": {
+                    "city": { "type": "string", "description": "City name." },
+                    "unit": { "type": "string", "enum": ["c", "f"] }
+                },
+                "required": ["city"]
+            }),
+        )
+        .with_description("Fetch current weather by city."),
+    )];
 
-    let result = model.apply_chat_template_with_tools_oaicompat(
-        &template,
-        &messages,
-        Some(tools_json.as_str()),
-        None,
-        true,
-    )?;
+    let result =
+        model.apply_chat_template_with_tools(&template, &messages, Some(&tools), None, true)?;
 
     println!("Prompt:\n{}", result.prompt);
     match result.grammar.as_deref() {

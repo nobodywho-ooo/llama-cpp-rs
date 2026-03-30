@@ -9,6 +9,39 @@ A wrapper around the [llama-cpp](https://github.com/ggerganov/llama.cpp/) librar
 This is part of the project powering all the LLMs at [utilityai], it is tightly coupled llama.cpp and mimics its API as
 closly as possible while being safe in order to stay up to date.
 
+# Tool Calling
+
+`llama-cpp-2` now exposes typed helpers for llama.cpp's OpenAI-compatible tool-calling flow, so callers do not need to hand-roll JSON strings for every request.
+
+```rust
+use llama_cpp_2::openai::{FunctionDefinition, ToolDefinition};
+use serde_json::json;
+
+let tools = vec![ToolDefinition::function(
+    FunctionDefinition::new(
+        "get_weather",
+        json!({
+            "type": "object",
+            "properties": {
+                "location": { "type": "string" }
+            },
+            "required": ["location"]
+        }),
+    )
+    .with_description("Fetch current weather by city."),
+)];
+
+let result = model.apply_chat_template_with_tools(
+    &template,
+    &messages,
+    Some(&tools),
+    None,
+    true,
+)?;
+```
+
+For standalone grammar generation from a JSON schema value, use `llama_cpp_2::json_schema_to_grammar_value`.
+
 # Dependencies
 
 This uses bindgen to build the bindings to llama.cpp. This means that you need to have clang installed on your system.
