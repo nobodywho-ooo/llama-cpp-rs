@@ -273,12 +273,10 @@ fn main() {
         }
     }
 
-    let parsed_json = result
-        .parse_response_oaicompat(&generated_text, false)
+    let parsed_message = result
+        .parse_response_oaicompat_typed(&generated_text, false)
         .expect("Failed to parse response");
-    let parsed_value: serde_json::Value =
-        serde_json::from_str(&parsed_json).expect("Failed to decode parsed response");
     let parsed_pretty =
-        serde_json::to_string_pretty(&parsed_value).expect("Failed to format parsed response");
+        serde_json::to_string_pretty(&parsed_message).expect("Failed to format parsed response");
     println!("\n\nParsed message:\n{}", parsed_pretty);
 }
