@@ -11,7 +11,7 @@ use crate::context::params::LlamaContextParams;
 use crate::context::LlamaContext;
 use crate::llama_backend::LlamaBackend;
 use crate::model::params::LlamaModelParams;
-use crate::openai::{ChatParseStateOaicompat, OpenAIChatTemplateParams};
+use crate::openai::{ChatParseStateOaicompat, OpenAIChatTemplateParams, ToolDefinition};
 use crate::token::LlamaToken;
 use crate::token_type::{LlamaTokenAttr, LlamaTokenAttrs};
 use crate::{
@@ -933,6 +933,32 @@ impl LlamaModel {
         }
         buff.truncate(res.try_into().expect("res is negative"));
         Ok(String::from_utf8(buff)?)
+    }
+
+    /// Apply the models chat template to some messages and return an optional tool grammar.
+    ///
+    /// This is the ergonomic Rust wrapper for llama.cpp's OpenAI-compatible tool-calling
+    /// flow. Tool definitions and schemas are serialized to JSON before calling into the
+    /// underlying FFI layer.
+    #[tracing::instrument(skip_all)]
+    pub fn apply_chat_template_with_tools(
+        &self,
+        tmpl: &LlamaChatTemplate,
+        messages: &[LlamaChatMessage],
+        tools: Option<&[ToolDefinition]>,
+        json_schema: Option<&serde_json::Value>,
+        add_generation_prompt: bool,
+    ) -> Result<ChatTemplateResult, ApplyChatTemplateError> {
+        let tools_json = tools.map(serde_json::to_string).transpose()?;
+        let json_schema_json = json_schema.map(serde_json::to_string).transpose()?;
+
+        self.apply_chat_template_with_tools_oaicompat(
+            tmpl,
+            messages,
+            tools_json.as_deref(),
+            json_schema_json.as_deref(),
+            add_generation_prompt,
+        )
     }
 
     /// Apply the models chat template to some messages and return an optional tool grammar.

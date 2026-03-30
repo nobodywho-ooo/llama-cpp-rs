@@ -1,9 +1,83 @@
 //! OpenAI Specific Utility methods.
 use crate::{status_is_ok, status_to_i32, ChatParseError};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::ffi::{c_char, CStr, CString};
 use std::mem;
 use std::ptr::{self, NonNull};
 use std::slice;
+
+/// OpenAI-compatible tool types supported by llama.cpp chat templates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolType {
+    /// A function tool.
+    #[default]
+    Function,
+}
+
+/// An OpenAI-compatible function definition for tool calling.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FunctionDefinition {
+    /// Tool name exposed to the model.
+    pub name: String,
+    /// Optional description shown in the prompt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// JSON schema describing the function arguments.
+    pub parameters: Value,
+    /// Optional strict-mode flag used by some tool-calling templates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
+}
+
+impl FunctionDefinition {
+    /// Create a new function definition from a name and JSON schema.
+    #[must_use]
+    pub fn new(name: impl Into<String>, parameters: Value) -> Self {
+        Self {
+            name: name.into(),
+            description: None,
+            parameters,
+            strict: None,
+        }
+    }
+
+    /// Attach a human-readable description.
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Toggle strict tool-call argument validation.
+    #[must_use]
+    pub fn with_strict(mut self, strict: bool) -> Self {
+        self.strict = Some(strict);
+        self
+    }
+}
+
+/// An OpenAI-compatible tool definition for tool-aware chat templates.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    /// Tool kind. This is `function` for the currently supported tool flow.
+    #[serde(default)]
+    pub r#type: ToolType,
+    /// Function metadata and parameter schema.
+    pub function: FunctionDefinition,
+}
+
+impl ToolDefinition {
+    /// Create a function tool definition.
+    #[must_use]
+    pub fn function(function: FunctionDefinition) -> Self {
+        Self {
+            r#type: ToolType::Function,
+            function,
+        }
+    }
+}
 
 /// Parameters for applying OpenAI-compatible chat templates.
 #[derive(Debug, Clone, PartialEq)]

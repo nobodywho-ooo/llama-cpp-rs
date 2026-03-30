@@ -1528,6 +1528,7 @@ dependencies = [
  "hf-hub",
  "llama-cpp-sys-2",
  "llguidance",
+ "serde",
  "serde_json",
  "thiserror",
  "toktrie",
