@@ -79,6 +79,86 @@ impl ToolDefinition {
     }
 }
 
+/// OpenAI-compatible tool choice modes supported by llama.cpp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolChoice {
+    /// Let the model decide whether to call a tool.
+    Auto,
+    /// Force at least one tool call.
+    Required,
+    /// Disable tool calls for this request.
+    None,
+}
+
+impl ToolChoice {
+    /// Return the wire-format string expected by the raw OpenAI-compatible API.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Required => "required",
+            Self::None => "none",
+        }
+    }
+}
+
+/// Typed Rust options for the OpenAI-compatible chat template flow.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenAIChatTemplateOptions<'a> {
+    /// OpenAI-compatible messages JSON array.
+    pub messages_json: &'a str,
+    /// Optional typed tool definitions.
+    pub tools: Option<&'a [ToolDefinition]>,
+    /// Optional typed tool choice mode.
+    pub tool_choice: Option<ToolChoice>,
+    /// Optional JSON schema value for grammar generation.
+    pub json_schema: Option<&'a Value>,
+    /// Optional custom grammar string.
+    pub grammar: Option<&'a str>,
+    /// Optional reasoning format string.
+    pub reasoning_format: Option<&'a str>,
+    /// Optional chat template kwargs JSON object.
+    pub chat_template_kwargs: Option<&'a Value>,
+    /// Whether to add the assistant generation prompt.
+    pub add_generation_prompt: bool,
+    /// Whether to render templates with Jinja.
+    pub use_jinja: bool,
+    /// Whether to allow parallel tool calls.
+    pub parallel_tool_calls: bool,
+    /// Whether thinking blocks are enabled.
+    pub enable_thinking: bool,
+    /// Whether to add BOS.
+    pub add_bos: bool,
+    /// Whether to add EOS.
+    pub add_eos: bool,
+    /// Whether to parse tool calls in responses.
+    pub parse_tool_calls: bool,
+}
+
+impl<'a> OpenAIChatTemplateOptions<'a> {
+    /// Create typed OpenAI-compatible options with sensible defaults.
+    #[must_use]
+    pub fn new(messages_json: &'a str) -> Self {
+        Self {
+            messages_json,
+            tools: None,
+            tool_choice: None,
+            json_schema: None,
+            grammar: None,
+            reasoning_format: None,
+            chat_template_kwargs: None,
+            add_generation_prompt: true,
+            use_jinja: true,
+            parallel_tool_calls: false,
+            enable_thinking: false,
+            add_bos: false,
+            add_eos: false,
+            parse_tool_calls: false,
+        }
+    }
+}
+
 /// Parameters for applying OpenAI-compatible chat templates.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenAIChatTemplateParams<'a> {
@@ -110,6 +190,108 @@ pub struct OpenAIChatTemplateParams<'a> {
     pub add_eos: bool,
     /// Whether to parse tool calls in responses.
     pub parse_tool_calls: bool,
+}
+
+/// OpenAI-compatible function call payload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FunctionCallOaicompat {
+    /// Function name selected by the model.
+    pub name: String,
+    /// Function arguments, either as a raw JSON string or a decoded object.
+    pub arguments: Value,
+}
+
+/// OpenAI-compatible tool call payload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCallOaicompat {
+    /// Tool call id when present.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Tool kind, typically `function`.
+    #[serde(default)]
+    pub r#type: Option<ToolType>,
+    /// Nested function call payload.
+    pub function: FunctionCallOaicompat,
+}
+
+/// Typed OpenAI-compatible parsed chat message.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChatMessageOaicompat {
+    /// Message role.
+    pub role: String,
+    /// Message content. This may be a string, array of typed content parts, or null.
+    #[serde(default)]
+    pub content: Option<Value>,
+    /// Optional reasoning content emitted by reasoning-capable templates.
+    #[serde(default)]
+    pub reasoning_content: Option<String>,
+    /// Optional tool name for tool-role messages.
+    #[serde(default, alias = "tool_name")]
+    pub name: Option<String>,
+    /// Optional tool call id for tool-role messages.
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    /// Optional assistant tool calls.
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCallOaicompat>,
+}
+
+impl ChatMessageOaicompat {
+    /// Parse a typed OpenAI-compatible chat message from JSON.
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+}
+
+/// Incremental OpenAI-compatible function call delta.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FunctionCallDeltaOaicompat {
+    /// Optional function name fragment.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Optional arguments fragment.
+    #[serde(default)]
+    pub arguments: Option<String>,
+}
+
+/// Incremental OpenAI-compatible tool call delta.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCallDeltaOaicompat {
+    /// Tool call index within the assistant message.
+    pub index: usize,
+    /// Optional tool call id fragment.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Optional tool kind.
+    #[serde(default)]
+    pub r#type: Option<ToolType>,
+    /// Optional function delta payload.
+    #[serde(default)]
+    pub function: Option<FunctionCallDeltaOaicompat>,
+}
+
+/// Typed OpenAI-compatible streaming delta.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChatMessageDeltaOaicompat {
+    /// Optional role fragment.
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Optional content fragment.
+    #[serde(default)]
+    pub content: Option<String>,
+    /// Optional reasoning content fragment.
+    #[serde(default)]
+    pub reasoning_content: Option<String>,
+    /// Optional tool call deltas.
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCallDeltaOaicompat>,
+}
+
+impl ChatMessageDeltaOaicompat {
+    /// Parse a typed OpenAI-compatible streaming delta from JSON.
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
 }
 
 /// Streaming OpenAI-compatible parser state.
@@ -180,6 +362,18 @@ impl ChatParseStateOaicompat {
         };
         result
     }
+
+    /// Update the parser with additional text and return typed OpenAI-compatible deltas.
+    pub fn update_typed(
+        &mut self,
+        text_added: &str,
+        is_partial: bool,
+    ) -> Result<Vec<ChatMessageDeltaOaicompat>, ChatParseError> {
+        self.update(text_added, is_partial)?
+            .into_iter()
+            .map(|json| ChatMessageDeltaOaicompat::from_json(&json).map_err(Into::into))
+            .collect()
+    }
 }
 
 impl Drop for ChatParseStateOaicompat {
@@ -190,7 +384,10 @@ impl Drop for ChatParseStateOaicompat {
 
 #[cfg(test)]
 mod tests {
-    use super::{FunctionDefinition, ToolDefinition, ToolType};
+    use super::{
+        ChatMessageDeltaOaicompat, ChatMessageOaicompat, FunctionDefinition,
+        OpenAIChatTemplateOptions, ToolChoice, ToolDefinition, ToolType,
+    };
     use serde_json::json;
 
     #[test]
@@ -237,5 +434,87 @@ mod tests {
             ToolDefinition::function(FunctionDefinition::new("noop", json!({ "type": "object" })));
 
         assert_eq!(tool.r#type, ToolType::Function);
+    }
+
+    #[test]
+    fn typed_options_have_reasonable_defaults() {
+        let options = OpenAIChatTemplateOptions::new("[]");
+
+        assert_eq!(options.messages_json, "[]");
+        assert_eq!(options.tool_choice, None);
+        assert!(options.add_generation_prompt);
+        assert!(options.use_jinja);
+        assert!(!options.parallel_tool_calls);
+        assert!(!options.parse_tool_calls);
+    }
+
+    #[test]
+    fn tool_choice_serializes_to_expected_wire_values() {
+        assert_eq!(ToolChoice::Auto.as_str(), "auto");
+        assert_eq!(ToolChoice::Required.as_str(), "required");
+        assert_eq!(ToolChoice::None.as_str(), "none");
+    }
+
+    #[test]
+    fn parsed_chat_message_accepts_openai_tool_calls() {
+        let parsed = ChatMessageOaicompat::from_json(
+            r#"{
+                "role":"assistant",
+                "content":null,
+                "reasoning_content":"thinking",
+                "tool_calls":[
+                    {
+                        "id":"call_123",
+                        "type":"function",
+                        "function":{
+                            "name":"get_weather",
+                            "arguments":{"location":"Paris"}
+                        }
+                    }
+                ]
+            }"#,
+        )
+        .expect("typed parsed message should deserialize");
+
+        assert_eq!(parsed.role, "assistant");
+        assert_eq!(parsed.reasoning_content.as_deref(), Some("thinking"));
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].function.name, "get_weather");
+        assert_eq!(
+            parsed.tool_calls[0].function.arguments,
+            json!({"location": "Paris"})
+        );
+    }
+
+    #[test]
+    fn parsed_chat_delta_accepts_tool_call_chunks() {
+        let parsed = ChatMessageDeltaOaicompat::from_json(
+            r#"{
+                "content":"hi",
+                "tool_calls":[
+                    {
+                        "index":0,
+                        "id":"call_123",
+                        "type":"function",
+                        "function":{
+                            "name":"get_weather",
+                            "arguments":"{\"location\":\"Paris\"}"
+                        }
+                    }
+                ]
+            }"#,
+        )
+        .expect("typed parsed delta should deserialize");
+
+        assert_eq!(parsed.content.as_deref(), Some("hi"));
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].index, 0);
+        assert_eq!(
+            parsed.tool_calls[0]
+                .function
+                .as_ref()
+                .and_then(|function| function.arguments.as_deref()),
+            Some("{\"location\":\"Paris\"}")
+        );
     }
 }

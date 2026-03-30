@@ -11,7 +11,10 @@ use crate::context::params::LlamaContextParams;
 use crate::context::LlamaContext;
 use crate::llama_backend::LlamaBackend;
 use crate::model::params::LlamaModelParams;
-use crate::openai::{ChatParseStateOaicompat, OpenAIChatTemplateParams, ToolDefinition};
+use crate::openai::{
+    ChatMessageOaicompat, ChatParseStateOaicompat, OpenAIChatTemplateOptions,
+    OpenAIChatTemplateParams, ToolDefinition,
+};
 use crate::token::LlamaToken;
 use crate::token_type::{LlamaTokenAttr, LlamaTokenAttrs};
 use crate::{
@@ -1146,6 +1149,40 @@ impl LlamaModel {
 
     /// Apply the model chat template using OpenAI-compatible JSON messages.
     #[tracing::instrument(skip_all)]
+    pub fn apply_chat_template_oaicompat_typed(
+        &self,
+        tmpl: &LlamaChatTemplate,
+        options: &OpenAIChatTemplateOptions<'_>,
+    ) -> Result<ChatTemplateResult, ApplyChatTemplateError> {
+        let tools_json = options.tools.map(serde_json::to_string).transpose()?;
+        let json_schema_json = options.json_schema.map(serde_json::to_string).transpose()?;
+        let chat_template_kwargs_json = options
+            .chat_template_kwargs
+            .map(serde_json::to_string)
+            .transpose()?;
+
+        let params = OpenAIChatTemplateParams {
+            messages_json: options.messages_json,
+            tools_json: tools_json.as_deref(),
+            tool_choice: options.tool_choice.map(|choice| choice.as_str()),
+            json_schema: json_schema_json.as_deref(),
+            grammar: options.grammar,
+            reasoning_format: options.reasoning_format,
+            chat_template_kwargs: chat_template_kwargs_json.as_deref(),
+            add_generation_prompt: options.add_generation_prompt,
+            use_jinja: options.use_jinja,
+            parallel_tool_calls: options.parallel_tool_calls,
+            enable_thinking: options.enable_thinking,
+            add_bos: options.add_bos,
+            add_eos: options.add_eos,
+            parse_tool_calls: options.parse_tool_calls,
+        };
+
+        self.apply_chat_template_oaicompat(tmpl, &params)
+    }
+
+    /// Apply the model chat template using OpenAI-compatible JSON messages.
+    #[tracing::instrument(skip_all)]
     pub fn apply_chat_template_oaicompat(
         &self,
         tmpl: &LlamaChatTemplate,
@@ -1378,6 +1415,16 @@ impl ChatTemplateResult {
 
         unsafe { llama_cpp_sys_2::llama_rs_string_free(out_json) };
         result
+    }
+
+    /// Parse a generated response into a typed OpenAI-compatible chat message.
+    pub fn parse_response_oaicompat_typed(
+        &self,
+        text: &str,
+        is_partial: bool,
+    ) -> Result<ChatMessageOaicompat, ChatParseError> {
+        let json = self.parse_response_oaicompat(text, is_partial)?;
+        ChatMessageOaicompat::from_json(&json).map_err(Into::into)
     }
 
     /// Initialize a streaming parser for OpenAI-compatible chat deltas.

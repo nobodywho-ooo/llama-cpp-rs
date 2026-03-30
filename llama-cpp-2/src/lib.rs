@@ -429,6 +429,9 @@ pub enum ChatParseError {
     /// the string contained a null byte and thus could not be converted to a c string.
     #[error("{0}")]
     NulError(#[from] NulError),
+    /// the JSON output could not be deserialized into the requested typed shape.
+    #[error("{0}")]
+    JsonError(#[from] serde_json::Error),
     /// the string could not be converted to utf8.
     #[error("{0}")]
     Utf8Error(#[from] FromUtf8Error),
