@@ -11,36 +11,39 @@ closly as possible while being safe in order to stay up to date.
 
 # Tool Calling
 
-`llama-cpp-2` now exposes typed helpers for llama.cpp's OpenAI-compatible tool-calling flow, so callers do not need to hand-roll JSON strings for every request.
+`llama-cpp-2` exposes the raw llama.cpp OpenAI-compatible tool-calling flow, so Rust callers can pass tool definitions into chat templates and get the generated grammar back.
 
 ```rust
-use llama_cpp_2::openai::{FunctionDefinition, ToolDefinition};
 use serde_json::json;
 
-let tools = vec![ToolDefinition::function(
-    FunctionDefinition::new(
-        "get_weather",
-        json!({
-            "type": "object",
-            "properties": {
-                "location": { "type": "string" }
-            },
-            "required": ["location"]
-        }),
-    )
-    .with_description("Fetch current weather by city."),
-)];
+let tools_json = json!([
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Fetch current weather by city.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": { "type": "string" }
+                },
+                "required": ["location"]
+            }
+        }
+    }
+])
+.to_string();
 
-let result = model.apply_chat_template_with_tools(
+let result = model.apply_chat_template_with_tools_oaicompat(
     &template,
     &messages,
-    Some(&tools),
+    Some(&tools_json),
     None,
     true,
 )?;
 ```
 
-For standalone grammar generation from a JSON schema value, use `llama_cpp_2::json_schema_to_grammar_value`.
+For standalone grammar generation from a JSON schema string, use `llama_cpp_2::json_schema_to_grammar`.
 
 # Dependencies
 

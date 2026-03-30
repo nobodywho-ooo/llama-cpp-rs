@@ -333,36 +333,25 @@ pub fn json_schema_to_grammar(schema_json: &str) -> Result<String> {
     result
 }
 
-/// Convert a JSON schema value into a llama.cpp grammar string.
-pub fn json_schema_to_grammar_value(schema: &serde_json::Value) -> Result<String> {
-    let schema_json = serde_json::to_string(schema)
-        .map_err(|err| LlamaCppError::JsonSchemaToGrammarError(err.to_string()))?;
-    json_schema_to_grammar(&schema_json)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{json_schema_to_grammar, json_schema_to_grammar_value};
-    use serde_json::json;
+    use super::json_schema_to_grammar;
 
     #[test]
-    fn json_schema_value_helper_matches_string_api() {
-        let schema = json!({
+    fn json_schema_string_api_returns_grammar() {
+        let schema = r#"{
             "type": "object",
             "properties": {
                 "city": { "type": "string" },
                 "unit": { "enum": ["c", "f"] }
             },
             "required": ["city"]
-        });
+        }"#;
 
-        let from_value =
-            json_schema_to_grammar_value(&schema).expect("schema value conversion should succeed");
-        let from_string = json_schema_to_grammar(&schema.to_string())
-            .expect("string-based schema conversion should succeed");
+        let grammar =
+            json_schema_to_grammar(schema).expect("string-based schema conversion should succeed");
 
-        assert_eq!(from_value, from_string);
-        assert!(from_value.contains("root ::="));
+        assert!(grammar.contains("root ::="));
     }
 }
 
@@ -406,9 +395,6 @@ pub enum ApplyChatTemplateError {
     /// the string contained a null byte and thus could not be converted to a c string.
     #[error("{0}")]
     NulError(#[from] NulError),
-    /// the input value could not be serialized to JSON.
-    #[error("{0}")]
-    JsonError(#[from] serde_json::Error),
     /// the string could not be converted to utf8.
     #[error("{0}")]
     FromUtf8Error(#[from] FromUtf8Error),
@@ -429,9 +415,6 @@ pub enum ChatParseError {
     /// the string contained a null byte and thus could not be converted to a c string.
     #[error("{0}")]
     NulError(#[from] NulError),
-    /// the JSON output could not be deserialized into the requested typed shape.
-    #[error("{0}")]
-    JsonError(#[from] serde_json::Error),
     /// the string could not be converted to utf8.
     #[error("{0}")]
     Utf8Error(#[from] FromUtf8Error),

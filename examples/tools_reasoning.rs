@@ -10,9 +10,7 @@ use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::ChatTemplateResult;
 use llama_cpp_2::model::Special;
 use llama_cpp_2::model::{AddBos, GrammarTriggerType, LlamaChatTemplate, LlamaModel};
-use llama_cpp_2::openai::{
-    ChatMessageOaicompat, FunctionDefinition, OpenAIChatTemplateOptions, ToolChoice, ToolDefinition,
-};
+use llama_cpp_2::openai::OpenAIChatTemplateParams;
 use llama_cpp_2::sampling::LlamaSampler;
 use serde_json::json;
 use std::collections::HashSet;
@@ -278,36 +276,40 @@ fn mock_tool_response(function_name: &str, arguments: &serde_json::Value) -> Str
     }
 }
 
-fn assistant_tool_call_message(parsed_message: &ChatMessageOaicompat) -> serde_json::Value {
-    let content = parsed_message
-        .content
-        .as_ref()
-        .map(|content| json!(content))
-        .unwrap_or(serde_json::Value::Null);
-    let reasoning_content = parsed_message
-        .reasoning_content
-        .as_ref()
-        .map(|content| json!(content))
-        .unwrap_or(serde_json::Value::Null);
+fn assistant_tool_call_message(parsed_message: &serde_json::Value) -> serde_json::Value {
     let tool_calls = parsed_message
-        .tool_calls
-        .iter()
+        .get("tool_calls")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
         .map(|tool_call| {
+            let arguments = tool_call
+                .get("function")
+                .and_then(|function| function.get("arguments"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
             json!({
-                "id": tool_call.id,
-                "type": tool_call.r#type,
+                "id": tool_call.get("id").cloned().unwrap_or(serde_json::Value::Null),
+                "type": tool_call.get("type").cloned().unwrap_or_else(|| json!("function")),
                 "function": {
-                    "name": tool_call.function.name,
-                    "arguments": tool_call.function.arguments.to_string(),
+                    "name": tool_call
+                        .get("function")
+                        .and_then(|function| function.get("name"))
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                    "arguments": arguments.to_string(),
                 }
             })
         })
         .collect::<Vec<_>>();
 
     json!({
-        "role": parsed_message.role,
-        "content": content,
-        "reasoning_content": reasoning_content,
+        "role": parsed_message.get("role").cloned().unwrap_or_else(|| json!("assistant")),
+        "content": parsed_message.get("content").cloned().unwrap_or(serde_json::Value::Null),
+        "reasoning_content": parsed_message
+            .get("reasoning_content")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
         "tool_calls": tool_calls,
     })
 }
@@ -334,30 +336,34 @@ fn main() {
         }
     ]);
 
-    let tools = vec![ToolDefinition::function(
-        FunctionDefinition::new(
-            "get_weather",
-            json!({
-                "type": "object",
-                "properties": {
-                    "city": { "type": "string", "description": "City name." },
-                    "unit": { "type": "string", "enum": ["c", "f"] }
-                },
-                "required": ["city"]
-            }),
-        )
-        .with_description("Fetch current weather by city."),
-    )];
+    let tools_json = json!([
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Fetch current weather by city.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "city": { "type": "string", "description": "City name." },
+                        "unit": { "type": "string", "enum": ["c", "f"] }
+                    },
+                    "required": ["city"]
+                }
+            }
+        }
+    ])
+    .to_string();
 
     let messages_json = messages.to_string();
-    let options = OpenAIChatTemplateOptions {
+    let options = OpenAIChatTemplateParams {
         messages_json: &messages_json,
-        tools: Some(&tools),
-        tool_choice: Some(ToolChoice::Auto),
+        tools_json: Some(&tools_json),
+        tool_choice: Some("auto"),
         json_schema: None,
         grammar: None,
         reasoning_format: Some("auto"),
-        chat_template_kwargs: None,
+        chat_template_kwargs: Some("{}"),
         add_generation_prompt: true,
         use_jinja: true,
         parallel_tool_calls: false,
@@ -368,7 +374,7 @@ fn main() {
     };
 
     let result = model
-        .apply_chat_template_oaicompat_typed(&template, &options)
+        .apply_chat_template_oaicompat(&template, &options)
         .expect("Failed to apply chat template");
 
     let generated_text = generate_text(&model, &backend, &result, 128);
@@ -377,38 +383,53 @@ fn main() {
     let parsed_json = result
         .parse_response_oaicompat(&generated_text, false)
         .expect("Failed to parse raw response");
-    let parsed_message = result
-        .parse_response_oaicompat_typed(&generated_text, false)
-        .expect("Failed to parse typed response");
+    let parsed_message: serde_json::Value =
+        serde_json::from_str(&parsed_json).expect("Failed to decode parsed response");
 
     println!("\n\nRaw parsed message:\n{}", parsed_json);
     let parsed_pretty =
-        serde_json::to_string_pretty(&parsed_message).expect("Failed to format typed response");
-    println!("\n\nTyped parsed message:\n{}", parsed_pretty);
+        serde_json::to_string_pretty(&parsed_message).expect("Failed to format parsed response");
+    println!("\n\nPretty parsed message:\n{}", parsed_pretty);
     parsed_summaries.push(("Initial raw parsed message", parsed_json.clone()));
-    parsed_summaries.push(("Initial typed parsed message", parsed_pretty));
+    parsed_summaries.push(("Initial pretty parsed message", parsed_pretty));
 
     if continuous {
-        if parsed_message.tool_calls.is_empty() {
+        let tool_calls = parsed_message
+            .get("tool_calls")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        if tool_calls.is_empty() {
             println!("\nNo tool calls were produced, skipping --continous follow-up.");
         } else {
             let mut conversation = messages.as_array().cloned().expect("messages is an array");
             conversation.push(assistant_tool_call_message(&parsed_message));
 
-            for tool_call in &parsed_message.tool_calls {
+            for tool_call in &tool_calls {
                 let tool_call_id = tool_call
-                    .id
-                    .clone()
-                    .unwrap_or_else(|| "mock_tool_call_id".to_string());
-                let tool_output =
-                    mock_tool_response(&tool_call.function.name, &tool_call.function.arguments);
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("mock_tool_call_id");
+                let function = tool_call
+                    .get("function")
+                    .expect("tool call should include function");
+                let function_name = function
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown_tool");
+                let function_arguments = function
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let tool_output = mock_tool_response(function_name, &function_arguments);
                 println!(
                     "\nMock tool response for {}({}):\n{}",
-                    tool_call.function.name, tool_call.function.arguments, tool_output
+                    function_name, function_arguments, tool_output
                 );
                 conversation.push(json!({
                     "role": "tool",
-                    "name": tool_call.function.name,
+                    "name": function_name,
                     "content": tool_output,
                     "tool_call_id": tool_call_id,
                 }));
@@ -416,14 +437,14 @@ fn main() {
 
             let follow_up_messages = serde_json::Value::Array(conversation);
             let follow_up_json = follow_up_messages.to_string();
-            let follow_up_options = OpenAIChatTemplateOptions {
+            let follow_up_options = OpenAIChatTemplateParams {
                 messages_json: &follow_up_json,
-                tools: Some(&tools),
-                tool_choice: Some(ToolChoice::None),
+                tools_json: Some(&tools_json),
+                tool_choice: Some("none"),
                 json_schema: None,
                 grammar: None,
                 reasoning_format: Some("auto"),
-                chat_template_kwargs: None,
+                chat_template_kwargs: Some("{}"),
                 add_generation_prompt: true,
                 use_jinja: true,
                 parallel_tool_calls: false,
@@ -435,25 +456,24 @@ fn main() {
 
             println!("\n\n--- Follow-up generation with mock tool output ---\n");
             let follow_up_result = model
-                .apply_chat_template_oaicompat_typed(&template, &follow_up_options)
+                .apply_chat_template_oaicompat(&template, &follow_up_options)
                 .expect("Failed to apply follow-up chat template");
             let follow_up_text = generate_text(&model, &backend, &follow_up_result, 192);
 
             let follow_up_raw = follow_up_result
                 .parse_response_oaicompat(&follow_up_text, false)
                 .expect("Failed to parse follow-up raw response");
-            let follow_up_typed = follow_up_result
-                .parse_response_oaicompat_typed(&follow_up_text, false)
-                .expect("Failed to parse follow-up typed response");
+            let follow_up_typed: serde_json::Value =
+                serde_json::from_str(&follow_up_raw).expect("Failed to decode follow-up response");
             let follow_up_typed_pretty = serde_json::to_string_pretty(&follow_up_typed)
-                .expect("Failed to format follow-up typed response");
+                .expect("Failed to format follow-up response");
             println!("\n\nFollow-up raw parsed message:\n{}", follow_up_raw);
             println!(
-                "\n\nFollow-up typed parsed message:\n{}",
+                "\n\nFollow-up pretty parsed message:\n{}",
                 follow_up_typed_pretty
             );
             parsed_summaries.push(("Follow-up raw parsed message", follow_up_raw));
-            parsed_summaries.push(("Follow-up typed parsed message", follow_up_typed_pretty));
+            parsed_summaries.push(("Follow-up pretty parsed message", follow_up_typed_pretty));
         }
     }
 

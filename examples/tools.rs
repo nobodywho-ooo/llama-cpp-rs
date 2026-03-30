@@ -11,7 +11,6 @@ use llama_cpp_2::model::Special;
 use llama_cpp_2::model::{
     AddBos, GrammarTriggerType, LlamaChatMessage, LlamaChatTemplate, LlamaModel,
 };
-use llama_cpp_2::openai::{FunctionDefinition, ToolDefinition};
 use llama_cpp_2::sampling::LlamaSampler;
 use serde_json::json;
 use std::collections::HashSet;
@@ -94,23 +93,33 @@ fn main() {
         .expect("valid user message"),
     ];
 
-    let tools = vec![ToolDefinition::function(
-        FunctionDefinition::new(
-            "get_weather",
-            json!({
-                "type": "object",
-                "properties": {
-                    "city": { "type": "string", "description": "City name." },
-                    "unit": { "type": "string", "enum": ["c", "f"] }
-                },
-                "required": ["city"]
-            }),
-        )
-        .with_description("Fetch current weather by city."),
-    )];
+    let tools_json = json!([
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Fetch current weather by city.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "city": { "type": "string", "description": "City name." },
+                        "unit": { "type": "string", "enum": ["c", "f"] }
+                    },
+                    "required": ["city"]
+                }
+            }
+        }
+    ])
+    .to_string();
 
     let result = model
-        .apply_chat_template_with_tools(&template, &messages, Some(&tools), None, true)
+        .apply_chat_template_with_tools_oaicompat(
+            &template,
+            &messages,
+            Some(&tools_json),
+            None,
+            true,
+        )
         .expect("Failed to apply chat template");
 
     println!("Prompt:\n{}", result.prompt);
@@ -273,10 +282,12 @@ fn main() {
         }
     }
 
-    let parsed_message = result
-        .parse_response_oaicompat_typed(&generated_text, false)
+    let parsed_json = result
+        .parse_response_oaicompat(&generated_text, false)
         .expect("Failed to parse response");
+    let parsed_value: serde_json::Value =
+        serde_json::from_str(&parsed_json).expect("Failed to decode parsed response JSON");
     let parsed_pretty =
-        serde_json::to_string_pretty(&parsed_message).expect("Failed to format parsed response");
+        serde_json::to_string_pretty(&parsed_value).expect("Failed to format parsed response");
     println!("\n\nParsed message:\n{}", parsed_pretty);
 }
