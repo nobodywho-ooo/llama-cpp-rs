@@ -73,22 +73,14 @@ fn get_cargo_target_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
 fn extract_lib_names(out_dir: &Path, build_shared_libs: bool, target_os: &TargetOs) -> Vec<String> {
     let lib_pattern = match target_os {
         TargetOs::Windows(_) => "*.lib",
-        TargetOs::Apple(AppleVariant::MacOS) => {
+        TargetOs::Apple(_) => {
             if build_shared_libs {
                 "*.dylib"
             } else {
                 "*.a"
             }
         }
-        TargetOs::Apple(_) => "*.a",
-        TargetOs::Linux => {
-            if build_shared_libs {
-                "*.so"
-            } else {
-                "*.a"
-            }
-        }
-        TargetOs::Android => {
+        TargetOs::Linux | TargetOs::Android => {
             if build_shared_libs {
                 "*.so"
             } else {
@@ -133,8 +125,7 @@ fn extract_lib_assets(out_dir: &Path, target_os: &TargetOs) -> Vec<PathBuf> {
     let shared_lib_pattern = match target_os {
         TargetOs::Windows(_) => "*.dll",
         TargetOs::Apple(_) => "*.dylib",
-        TargetOs::Linux => "*.so",
-        TargetOs::Android => "*.so",
+        TargetOs::Linux | TargetOs::Android => "*.so",
     };
 
     let shared_libs_dir = match target_os {
