@@ -918,6 +918,10 @@ impl LlamaModel {
             )
         };
 
+        if res < 0 {
+            return Err(ApplyChatTemplateError::FfiError(res));
+        }
+
         if res > buff.len().try_into().expect("Buffer size exceeds i32::MAX") {
             buff.resize(res.try_into().expect("res is negative"), 0);
 
@@ -931,6 +935,9 @@ impl LlamaModel {
                     buff.len().try_into().expect("Buffer size exceeds i32::MAX"),
                 )
             };
+            if res < 0 {
+                return Err(ApplyChatTemplateError::FfiError(res));
+            }
             assert_eq!(Ok(res), buff.len().try_into());
         }
         buff.truncate(res.try_into().expect("res is negative"));
