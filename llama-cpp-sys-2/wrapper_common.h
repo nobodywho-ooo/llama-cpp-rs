@@ -20,7 +20,6 @@ struct llama_rs_chat_template_result {
     char * grammar;
     char * parser;
     int chat_format;
-    bool thinking_forced_open;
     bool grammar_lazy;
     struct llama_rs_grammar_trigger * grammar_triggers;
     size_t grammar_triggers_count;

@@ -66,7 +66,6 @@ extern "C" void llama_rs_chat_template_result_free(struct llama_rs_chat_template
     result->grammar = nullptr;
     result->parser = nullptr;
     result->chat_format = 0;
-    result->thinking_forced_open = false;
     result->grammar_lazy = false;
     result->grammar_triggers = nullptr;
     result->grammar_triggers_count = 0;

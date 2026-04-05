@@ -94,14 +94,12 @@ llama_rs_status llama_rs_chat_parse_to_oaicompat(
     int chat_format,
     bool parse_tool_calls,
     const char * parser_data,
-    bool thinking_forced_open,
     char ** out_json);
 
 struct llama_rs_chat_parse_state_oaicompat * llama_rs_chat_parse_state_init_oaicompat(
     int chat_format,
     bool parse_tool_calls,
-    const char * parser_data,
-    bool thinking_forced_open);
+    const char * parser_data);
 
 llama_rs_status llama_rs_chat_parse_state_update_oaicompat(
     struct llama_rs_chat_parse_state_oaicompat * state,
