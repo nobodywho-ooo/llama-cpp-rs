@@ -15,7 +15,7 @@ use crate::openai::{ChatParseStateOaicompat, OpenAIChatTemplateParams};
 use crate::token::LlamaToken;
 use crate::token_type::{LlamaTokenAttr, LlamaTokenAttrs};
 use crate::{
-    status_is_ok, status_to_i32, ApplyChatTemplateError, ChatParseError, ChatTemplateError,
+    status_is_ok, ApplyChatTemplateError, ChatParseError, ChatTemplateError,
     LlamaContextLoadError, LlamaLoraAdapterInitError, LlamaModelLoadError, MetaValError,
     NewLlamaChatMessageError, StringToTokenError, TokenToStringError,
 };
@@ -266,12 +266,12 @@ impl LlamaModel {
     ) -> Result<String, TokenToStringError> {
         // TODO lsptrip None is acutally not quite the origignal behavior of this function,
         let mut decoder = encoding_rs::UTF_8.new_decoder();
-        Ok(self.token_to_piece(
+        self.token_to_piece(
             token,
             &mut decoder,
             matches!(special, Special::Tokenize),
             None,
-        )?)
+        )
     }
 
     /// Convert single token to bytes.
@@ -992,7 +992,7 @@ impl LlamaModel {
 
         let result = (|| {
             if !status_is_ok(rc) {
-                return Err(ApplyChatTemplateError::FfiError(status_to_i32(rc)));
+                return Err(ApplyChatTemplateError::FfiError(rc));
             }
             if raw_result.prompt.is_null() {
                 return Err(ApplyChatTemplateError::NullResult);
@@ -1099,7 +1099,7 @@ impl LlamaModel {
                 }
                 parsed
             };
-            let parse_tool_calls = tools_json.map_or(false, |tools| !tools.is_empty());
+            let parse_tool_calls = tools_json.is_some_and(|tools| !tools.is_empty());
             Ok(ChatTemplateResult {
                 prompt,
                 grammar,
@@ -1188,7 +1188,7 @@ impl LlamaModel {
 
         let result = (|| {
             if !status_is_ok(rc) {
-                return Err(ApplyChatTemplateError::FfiError(status_to_i32(rc)));
+                return Err(ApplyChatTemplateError::FfiError(rc));
             }
             if raw_result.prompt.is_null() {
                 return Err(ApplyChatTemplateError::NullResult);
@@ -1341,7 +1341,7 @@ impl ChatTemplateResult {
 
         let result = (|| {
             if !status_is_ok(rc) {
-                return Err(ChatParseError::FfiError(status_to_i32(rc)));
+                return Err(ChatParseError::FfiError(rc));
             }
             if out_json.is_null() {
                 return Err(ChatParseError::NullResult);

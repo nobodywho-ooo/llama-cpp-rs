@@ -44,10 +44,6 @@ pub(crate) fn status_is_ok(status: llama_cpp_sys_2::llama_rs_status) -> bool {
     status == llama_cpp_sys_2::LLAMA_RS_STATUS_OK
 }
 
-pub(crate) fn status_to_i32(status: llama_cpp_sys_2::llama_rs_status) -> i32 {
-    status as i32
-}
-
 /// A failable result from a llama.cpp function.
 pub type Result<T> = std::result::Result<T, LlamaCppError>;
 
@@ -317,10 +313,7 @@ pub fn json_schema_to_grammar(schema_json: &str) -> Result<String> {
 
     let result = {
         if !status_is_ok(rc) || out.is_null() {
-            return Err(LlamaCppError::JsonSchemaToGrammarError(format!(
-                "ffi error {}",
-                status_to_i32(rc)
-            )));
+            return Err(LlamaCppError::JsonSchemaToGrammarError(format!("ffi error {}", rc)));
         }
         let grammar_bytes = unsafe { CStr::from_ptr(out) }.to_bytes().to_vec();
         let grammar = String::from_utf8(grammar_bytes)
