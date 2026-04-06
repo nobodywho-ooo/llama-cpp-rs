@@ -49,6 +49,18 @@ static std::string random_string(size_t length = 32) {
     return result;
 }
 
+static bool ends_with(const std::string & value, const std::string & suffix) {
+    return value.size() >= suffix.size()
+        && value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+static bool detect_thinking_forced_open(const common_chat_params & params) {
+    return params.supports_thinking
+        && !params.thinking_start_tag.empty()
+        && !params.thinking_end_tag.empty()
+        && ends_with(params.generation_prompt, params.thinking_start_tag);
+}
+
 static void init_chat_msg(struct llama_rs_chat_msg_oaicompat * out_msg) {
     if (!out_msg) {
         return;
@@ -248,6 +260,7 @@ extern "C" llama_rs_status llama_rs_apply_chat_template_with_tools_oaicompat(
     out_result->prompt = nullptr;
     out_result->grammar = nullptr;
     out_result->parser = nullptr;
+    out_result->generation_prompt = nullptr;
     out_result->chat_format = 0;
     out_result->grammar_lazy = false;
     out_result->grammar_triggers = nullptr;
@@ -285,6 +298,9 @@ extern "C" llama_rs_status llama_rs_apply_chat_template_with_tools_oaicompat(
         }
         if (!params.parser.empty()) {
             out_result->parser = llama_rs_dup_string(params.parser);
+        }
+        if (!params.generation_prompt.empty()) {
+            out_result->generation_prompt = llama_rs_dup_string(params.generation_prompt);
         }
         out_result->chat_format = static_cast<int>(params.format);
         out_result->grammar_lazy = params.grammar_lazy;
@@ -339,6 +355,7 @@ extern "C" llama_rs_status llama_rs_apply_chat_template_oaicompat(
     out_result->prompt = nullptr;
     out_result->grammar = nullptr;
     out_result->parser = nullptr;
+    out_result->generation_prompt = nullptr;
     out_result->chat_format = 0;
     out_result->grammar_lazy = false;
     out_result->grammar_triggers = nullptr;
@@ -392,6 +409,9 @@ extern "C" llama_rs_status llama_rs_apply_chat_template_oaicompat(
         if (!params_out.parser.empty()) {
             out_result->parser = llama_rs_dup_string(params_out.parser);
         }
+        if (!params_out.generation_prompt.empty()) {
+            out_result->generation_prompt = llama_rs_dup_string(params_out.generation_prompt);
+        }
         out_result->chat_format = static_cast<int>(params_out.format);
         out_result->grammar_lazy = params_out.grammar_lazy;
 
@@ -436,6 +456,7 @@ extern "C" llama_rs_status llama_rs_chat_parse_to_oaicompat(
     int chat_format,
     bool parse_tool_calls,
     const char * parser_data,
+    const char * generation_prompt,
     char ** out_json) {
     if (!input || !out_json) {
         return LLAMA_RS_STATUS_INVALID_ARGUMENT;
@@ -446,6 +467,9 @@ extern "C" llama_rs_status llama_rs_chat_parse_to_oaicompat(
         common_chat_parser_params syntax;
         syntax.format = static_cast<common_chat_format>(chat_format);
         syntax.parse_tool_calls = parse_tool_calls;
+        if (generation_prompt && std::strlen(generation_prompt) > 0) {
+            syntax.generation_prompt = generation_prompt;
+        }
         if (parser_data && std::strlen(parser_data) > 0) {
             syntax.parser.load(parser_data);
         }
@@ -519,11 +543,15 @@ extern "C" void llama_rs_chat_msgs_free_oaicompat(struct llama_rs_chat_msg_oaico
 extern "C" struct llama_rs_chat_parse_state_oaicompat * llama_rs_chat_parse_state_init_oaicompat(
     int chat_format,
     bool parse_tool_calls,
-    const char * parser_data) {
+    const char * parser_data,
+    const char * generation_prompt) {
     try {
         common_chat_parser_params syntax;
         syntax.format = static_cast<common_chat_format>(chat_format);
         syntax.parse_tool_calls = parse_tool_calls;
+        if (generation_prompt && std::strlen(generation_prompt) > 0) {
+            syntax.generation_prompt = generation_prompt;
+        }
         if (parser_data && std::strlen(parser_data) > 0) {
             syntax.parser.load(parser_data);
         }
