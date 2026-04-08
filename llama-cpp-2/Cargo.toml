@@ -39,6 +39,7 @@ android-shared-stdcxx = ["llama-cpp-sys-2/shared-stdcxx"]
 android-static-stdcxx = ["llama-cpp-sys-2/static-stdcxx"]
 mtmd = ["llama-cpp-sys-2/mtmd"]
 system-ggml = ["llama-cpp-sys-2/system-ggml"]
+system-ggml-static = ["llama-cpp-sys-2/system-ggml-static"]
 llguidance = ["dep:llguidance", "dep:toktrie"]
 
 
