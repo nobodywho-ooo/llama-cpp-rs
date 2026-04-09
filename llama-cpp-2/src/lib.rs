@@ -314,7 +314,10 @@ pub fn json_schema_to_grammar(schema_json: &str) -> Result<String> {
 
     let result = {
         if !status_is_ok(rc) || out.is_null() {
-            return Err(LlamaCppError::JsonSchemaToGrammarError(format!("ffi error {}", rc)));
+            return Err(LlamaCppError::JsonSchemaToGrammarError(format!(
+                "ffi error {}",
+                rc
+            )));
         }
         let grammar_bytes = unsafe { CStr::from_ptr(out) }.to_bytes().to_vec();
         let grammar = String::from_utf8(grammar_bytes)
