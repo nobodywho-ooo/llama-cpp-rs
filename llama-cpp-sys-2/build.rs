@@ -565,8 +565,8 @@ fn main() {
         // if `target-cpu` is set set, also set -march for llama.cpp to the same value
         if let Some(ref cpu) = target_cpu {
             debug_log!("Setting baseline architecture: -march={}", cpu);
-            config.cflag(&format!("-march={}", cpu));
-            config.cxxflag(&format!("-march={}", cpu));
+            config.cflag(format!("-march={}", cpu));
+            config.cxxflag(format!("-march={}", cpu));
         }
 
         // I expect this env var to always be present
@@ -993,6 +993,7 @@ fn main() {
     } else {
         "static"
     };
+
     let llama_libs = extract_lib_names(&out_dir, build_shared_libs, &target_os);
 
     assert_ne!(llama_libs.len(), 0);

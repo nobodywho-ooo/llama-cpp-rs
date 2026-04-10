@@ -9,7 +9,7 @@ use crate::model::LlamaModel;
 use crate::token::data_array::LlamaTokenDataArray;
 use crate::token::logit_bias::LlamaLogitBias;
 use crate::token::LlamaToken;
-use crate::{status_is_ok, status_to_i32, GrammarError, SamplerAcceptError};
+use crate::{status_is_ok, GrammarError, SamplerAcceptError};
 
 /// A safe wrapper around `llama_sampler`.
 pub struct LlamaSampler {
@@ -70,7 +70,7 @@ impl LlamaSampler {
         if status_is_ok(sampler_result) {
             Ok(())
         } else {
-            Err(SamplerAcceptError::FfiError(status_to_i32(sampler_result)))
+            Err(SamplerAcceptError::FfiError(sampler_result))
         }
     }
 

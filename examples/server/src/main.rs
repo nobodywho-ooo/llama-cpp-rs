@@ -564,11 +564,10 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or("llama.cpp")
         .to_string();
 
-    let backend = LlamaBackend::init()
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
+    let backend = LlamaBackend::init().map_err(|err| std::io::Error::other(err.to_string()))?;
     let params = LlamaModelParams::default();
     let model = LlamaModel::load_from_file(&backend, model_path, &params)
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
+        .map_err(|err| std::io::Error::other(err.to_string()))?;
     let default_template = model.chat_template(None).ok();
 
     let state = web::Data::new(AppState {

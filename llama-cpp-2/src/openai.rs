@@ -1,5 +1,5 @@
 //! OpenAI-compatible utility methods.
-use crate::{status_is_ok, status_to_i32, ChatParseError};
+use crate::{status_is_ok, ChatParseError};
 use std::ffi::{c_char, CStr, CString};
 use std::mem;
 use std::ptr::{self, NonNull};
@@ -68,7 +68,7 @@ impl ChatParseStateOaicompat {
 
         let result = {
             if !status_is_ok(rc) {
-                return Err(ChatParseError::FfiError(status_to_i32(rc)));
+                return Err(ChatParseError::FfiError(rc));
             }
             if out_diffs_count > 0 && out_diffs.is_null() {
                 return Err(ChatParseError::NullResult);
@@ -88,7 +88,7 @@ impl ChatParseStateOaicompat {
                     if !out_json.is_null() {
                         unsafe { llama_cpp_sys_2::llama_rs_string_free(out_json) };
                     }
-                    return Err(ChatParseError::FfiError(status_to_i32(rc)));
+                    return Err(ChatParseError::FfiError(rc));
                 }
                 if out_json.is_null() {
                     return Err(ChatParseError::NullResult);
