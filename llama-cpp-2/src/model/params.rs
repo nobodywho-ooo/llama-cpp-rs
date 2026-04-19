@@ -18,6 +18,9 @@ const LLAMA_SPLIT_MODE_LAYER: i8 = llama_cpp_sys_2::LLAMA_SPLIT_MODE_LAYER as i8
 #[allow(clippy::cast_possible_wrap)]
 #[allow(clippy::cast_possible_truncation)]
 const LLAMA_SPLIT_MODE_ROW: i8 = llama_cpp_sys_2::LLAMA_SPLIT_MODE_ROW as i8;
+#[allow(clippy::cast_possible_wrap)]
+#[allow(clippy::cast_possible_truncation)]
+const LLAMA_SPLIT_MODE_TENSOR: i8 = llama_cpp_sys_2::LLAMA_SPLIT_MODE_TENSOR as i8;
 
 /// A rusty wrapper around `llama_split_mode`.
 #[repr(i8)]
@@ -29,6 +32,8 @@ pub enum LlamaSplitMode {
     Layer = LLAMA_SPLIT_MODE_LAYER,
     /// Split layers and KV across GPUs, use tensor parallelism if supported
     Row = LLAMA_SPLIT_MODE_ROW,
+    /// Experimental tensor parallelism across GPUs
+    Tensor = LLAMA_SPLIT_MODE_TENSOR,
 }
 
 /// An error that occurs when unknown split mode is encountered.
@@ -50,6 +55,7 @@ impl TryFrom<i32> for LlamaSplitMode {
             LLAMA_SPLIT_MODE_NONE => Ok(Self::None),
             LLAMA_SPLIT_MODE_LAYER => Ok(Self::Layer),
             LLAMA_SPLIT_MODE_ROW => Ok(Self::Row),
+            LLAMA_SPLIT_MODE_TENSOR => Ok(Self::Tensor),
             _ => Err(LlamaSplitModeParseError(value)),
         }
     }
@@ -70,6 +76,7 @@ impl TryFrom<u32> for LlamaSplitMode {
             LLAMA_SPLIT_MODE_NONE => Ok(Self::None),
             LLAMA_SPLIT_MODE_LAYER => Ok(Self::Layer),
             LLAMA_SPLIT_MODE_ROW => Ok(Self::Row),
+            LLAMA_SPLIT_MODE_TENSOR => Ok(Self::Tensor),
             _ => Err(LlamaSplitModeParseError(
                 value.try_into().unwrap_or(i32::MAX),
             )),
@@ -84,6 +91,7 @@ impl From<LlamaSplitMode> for i32 {
             LlamaSplitMode::None => LLAMA_SPLIT_MODE_NONE.into(),
             LlamaSplitMode::Layer => LLAMA_SPLIT_MODE_LAYER.into(),
             LlamaSplitMode::Row => LLAMA_SPLIT_MODE_ROW.into(),
+            LlamaSplitMode::Tensor => LLAMA_SPLIT_MODE_TENSOR.into(),
         }
     }
 }
@@ -95,6 +103,7 @@ impl From<LlamaSplitMode> for u32 {
             LlamaSplitMode::None => LLAMA_SPLIT_MODE_NONE as u32,
             LlamaSplitMode::Layer => LLAMA_SPLIT_MODE_LAYER as u32,
             LlamaSplitMode::Row => LLAMA_SPLIT_MODE_ROW as u32,
+            LlamaSplitMode::Tensor => LLAMA_SPLIT_MODE_TENSOR as u32,
         }
     }
 }
@@ -463,5 +472,26 @@ impl Default for LlamaModelParams {
             }],
             devices: Box::pin([std::ptr::null_mut(); 16]),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LlamaSplitMode;
+
+    #[test]
+    fn tensor_split_mode_round_trips() {
+        assert_eq!(
+            LlamaSplitMode::try_from(llama_cpp_sys_2::LLAMA_SPLIT_MODE_TENSOR),
+            Ok(LlamaSplitMode::Tensor)
+        );
+        assert_eq!(
+            u32::from(LlamaSplitMode::Tensor),
+            llama_cpp_sys_2::LLAMA_SPLIT_MODE_TENSOR as u32
+        );
+        assert_eq!(
+            i32::from(LlamaSplitMode::Tensor),
+            llama_cpp_sys_2::LLAMA_SPLIT_MODE_TENSOR as i32
+        );
     }
 }
