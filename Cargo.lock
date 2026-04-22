@@ -411,9 +411,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.59"
+version = "1.2.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7a4d3ec6524d28a329fc53654bbadc9bdd7b0431f5d65f1a56ffb28a1ee5283"
+checksum = "43c5703da9466b66a946814e1adf53ea2c90f10063b86290cc9eb67ce3478a20"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -759,7 +759,7 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
 name = "embeddings"
-version = "0.1.144"
+version = "0.1.145"
 dependencies = [
  "anyhow",
  "clap",
@@ -1521,7 +1521,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "llama-cpp-2"
-version = "0.1.144"
+version = "0.1.145"
 dependencies = [
  "encoding_rs",
  "enumflags2",
@@ -1538,7 +1538,7 @@ dependencies = [
 
 [[package]]
 name = "llama-cpp-sys-2"
-version = "0.1.144"
+version = "0.1.145"
 dependencies = [
  "bindgen",
  "cc",
@@ -1894,9 +1894,9 @@ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
 name = "rand"
-version = "0.9.2"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
+checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
 dependencies = [
  "rand_chacha",
  "rand_core",
@@ -2326,7 +2326,7 @@ checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
 
 [[package]]
 name = "simple"
-version = "0.1.144"
+version = "0.1.145"
 dependencies = [
  "anyhow",
  "clap",
@@ -2616,9 +2616,9 @@ dependencies = [
 
 [[package]]
 name = "toktrie"
-version = "1.7.0"
+version = "1.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0310776df61c26b98e6ed7c3629de5131e0c8731439350b79152b7f52468229a"
+checksum = "b589bf48bfca2bfc3ccf04501b1b99b769c14209856edf4c4f168022594a6b9b"
 dependencies = [
  "anyhow",
  "bytemuck",
