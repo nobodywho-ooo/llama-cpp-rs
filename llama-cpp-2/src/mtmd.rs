@@ -190,7 +190,9 @@ impl MtmdContext {
     /// Check whether non-causal attention mask is needed before `llama_decode`.
     #[must_use]
     pub fn decode_use_non_causal(&self) -> bool {
-        unsafe { llama_cpp_sys_2::mtmd_decode_use_non_causal(self.context.as_ptr(), std::ptr::null()) }
+        unsafe {
+            llama_cpp_sys_2::mtmd_decode_use_non_causal(self.context.as_ptr(), std::ptr::null())
+        }
     }
 
     /// Check whether the current model uses M-RoPE for `llama_decode`.
