@@ -180,6 +180,23 @@ impl Drop for LlamaBackend {
     }
 }
 
+/// Load all available GGML backend modules from `path`.
+///
+/// Compile-time path to the built GGML backend modules directory.
+/// Populated by build.rs from `DEP_LLAMA_BACKENDS_DIR` (emitted by llama-cpp-sys-2).
+/// None on static builds or when the feature is disabled.
+#[cfg(feature = "dynamic-backends")]
+pub const BACKENDS_DIR: Option<&str> = option_env!("GGML_BACKENDS_DIR");
+
+/// Call this before [`LlamaBackend::init`] to enable runtime hardware selection
+/// (Vulkan, CPU-AVX512, CPU-AVX2, etc.) when built with the `dynamic-backends` feature.
+#[cfg(feature = "dynamic-backends")]
+pub fn ggml_backend_load_all_from_path(path: &std::path::Path) {
+    let s = std::ffi::CString::new(path.to_str().expect("path must be valid UTF-8"))
+        .expect("path must not contain null bytes");
+    unsafe { llama_cpp_sys_2::ggml_backend_load_all_from_path(s.as_ptr()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

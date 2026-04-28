@@ -820,6 +820,18 @@ fn main() {
         config.define("LLAMA_USE_SYSTEM_GGML", "ON");
     }
 
+    if cfg!(feature = "dynamic-backends") {
+        // Pre-create the backends directory so CMake can install MODULE libs there.
+        // GGML_BACKEND_DIR causes backends to install to this known path instead of
+        // CMAKE_INSTALL_BINDIR, making them easy to locate in downstream build scripts.
+        let backends_dir = out_dir.join("backends");
+        std::fs::create_dir_all(&backends_dir).unwrap();
+        config.define("GGML_BACKEND_DL", "ON");
+        config.define("GGML_CPU_ALL_VARIANTS", "ON");
+        config.define("GGML_BACKEND_DIR", backends_dir.to_str().unwrap());
+        // BUILD_SHARED_LIBS=ON is already set above via the dynamic-link feature.
+    }
+
     // General
     config
         .profile(&profile)
@@ -827,6 +839,10 @@ fn main() {
         .always_configure(false);
 
     let build_dir = config.build();
+
+    if cfg!(feature = "dynamic-backends") {
+        println!("cargo:backends_dir={}", out_dir.join("backends").display());
+    }
 
     // Build mtmd directly with cc::Build, bypassing the cmake tools build.
     // Using LLAMA_BUILD_TOOLS=ON would pull in all tools (batched-bench, quantize, etc.)
