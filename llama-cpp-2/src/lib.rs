@@ -86,6 +86,9 @@ pub enum LlamaCppError {
     /// Failed to convert JSON schema to grammar.
     #[error("JsonSchemaToGrammarError: {0}")]
     JsonSchemaToGrammarError(String),
+    /// There was an error fitting model parameters to available memory.
+    #[error("{0}")]
+    FitError(#[from] crate::model::params::FitError),
 }
 
 /// There was an error while getting the chat template from a model.
