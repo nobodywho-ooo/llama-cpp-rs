@@ -296,6 +296,37 @@ impl<'model> LlamaContext<'model> {
         unsafe { slice::from_raw_parts(data, len) }
     }
 
+    /// Temporarily exposes a mutable slice of logits for the ith token, releasing the borrow
+    /// before returning so callers can immediately use the context again (e.g. for sampling).
+    ///
+    /// # Panics
+    ///
+    /// - `i` is greater than `n_ctx`
+    /// - `n_vocab` does not fit into a usize
+    /// - logit `i` is not initialized.
+    pub fn with_logits_ith_mut<F, R>(&mut self, i: i32, f: F) -> R
+    where
+        F: FnOnce(&mut [f32]) -> R,
+    {
+        assert!(
+            self.initialized_logits.contains(&i),
+            "logit {i} is not initialized. only {:?} is",
+            self.initialized_logits
+        );
+        assert!(
+            self.n_ctx() > u32::try_from(i).expect("i does not fit into a u32"),
+            "n_ctx ({}) must be greater than i ({})",
+            self.n_ctx(),
+            i
+        );
+
+        let data = unsafe { llama_cpp_sys_2::llama_get_logits_ith(self.context.as_ptr(), i) };
+        let len = usize::try_from(self.model.n_vocab()).expect("n_vocab does not fit into a usize");
+        let logits = unsafe { slice::from_raw_parts_mut(data, len) };
+
+        f(logits)
+    }
+
     /// Reset the timings for the context.
     pub fn reset_timings(&mut self) {
         unsafe { llama_cpp_sys_2::llama_perf_context_reset(self.context.as_ptr()) }
