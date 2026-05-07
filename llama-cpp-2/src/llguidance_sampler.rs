@@ -18,6 +18,7 @@ use crate::GrammarError;
 struct LlgContext {
     matcher: Matcher,
     tok_env: Arc<ApproximateTokEnv>,
+    tok_eos: u32,
     grammar_kind: String,
     grammar_data: String,
 }
@@ -27,7 +28,7 @@ struct LlgContext {
 /// This mirrors the logic in upstream `llguidance.cpp` — for each token:
 /// - Try normal detokenize (special=false)
 /// - If empty, detokenize with special=true and prefix with 0xFF marker byte
-fn build_tok_env(model: &LlamaModel) -> Arc<ApproximateTokEnv> {
+fn build_tok_env(model: &LlamaModel) -> (Arc<ApproximateTokEnv>, u32) {
     let n_vocab = model.n_vocab().cast_unsigned();
     let tok_eos = {
         let eot = unsafe { llama_cpp_sys_2::llama_vocab_eot(model.vocab_ptr()) };
@@ -63,7 +64,7 @@ fn build_tok_env(model: &LlamaModel) -> Arc<ApproximateTokEnv> {
     }
 
     let trie = TokTrie::from(&info, &words);
-    Arc::new(ApproximateTokEnv::new(trie))
+    (Arc::new(ApproximateTokEnv::new(trie)), tok_eos)
 }
 
 // --- extern "C" vtable callbacks ---
@@ -86,8 +87,6 @@ unsafe extern "C" fn llg_apply(
     smpl: *mut llama_cpp_sys_2::llama_sampler,
     cur_p: *mut llama_cpp_sys_2::llama_token_data_array,
 ) {
-    use toktrie::TokenizerEnv as _;
-
     let ctx = unsafe { &mut *(*smpl).ctx.cast::<LlgContext>() };
     let cur_p = unsafe { &mut *cur_p };
     let data = unsafe { std::slice::from_raw_parts_mut(cur_p.data, cur_p.size) };
@@ -96,9 +95,8 @@ unsafe extern "C" fn llg_apply(
         Ok(mask) => mask,
         Err(_) => {
             // Grammar is done or stopped — force EOS so generation halts cleanly.
-            let eos = ctx.tok_env.tok_trie().info().tok_eos;
             for item in data.iter_mut() {
-                if item.id.cast_unsigned() != eos {
+                if item.id.cast_unsigned() != ctx.tok_eos {
                     item.logit = f32::NEG_INFINITY;
                 }
             }
@@ -125,6 +123,7 @@ unsafe extern "C" fn llg_clone(
     let new_ctx = Box::new(LlgContext {
         matcher: ctx.matcher.deep_clone(),
         tok_env: Arc::clone(&ctx.tok_env),
+        tok_eos: ctx.tok_eos,
         grammar_kind: ctx.grammar_kind.clone(),
         grammar_data: ctx.grammar_data.clone(),
     });
@@ -162,7 +161,7 @@ pub(crate) fn create_llg_sampler(
     grammar_kind: &str,
     grammar_data: &str,
 ) -> Result<LlamaSampler, GrammarError> {
-    let tok_env = build_tok_env(model);
+    let (tok_env, tok_eos) = build_tok_env(model);
     let tok_env_dyn: Arc<dyn toktrie::TokenizerEnv + Sync> = tok_env.clone();
 
     let factory = llguidance::ParserFactory::new_simple(&tok_env_dyn)
@@ -180,6 +179,7 @@ pub(crate) fn create_llg_sampler(
     let ctx = Box::new(LlgContext {
         matcher,
         tok_env,
+        tok_eos,
         grammar_kind: grammar_kind.to_string(),
         grammar_data: grammar_data.to_string(),
     });
