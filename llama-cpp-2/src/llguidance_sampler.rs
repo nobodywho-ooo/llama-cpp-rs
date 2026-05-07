@@ -86,14 +86,26 @@ unsafe extern "C" fn llg_apply(
     smpl: *mut llama_cpp_sys_2::llama_sampler,
     cur_p: *mut llama_cpp_sys_2::llama_token_data_array,
 ) {
+    use toktrie::TokenizerEnv as _;
+
     let ctx = unsafe { &mut *(*smpl).ctx.cast::<LlgContext>() };
     let cur_p = unsafe { &mut *cur_p };
+    let data = unsafe { std::slice::from_raw_parts_mut(cur_p.data, cur_p.size) };
 
-    let Ok(mask) = ctx.matcher.compute_mask() else {
-        return;
+    let mask = match ctx.matcher.compute_mask() {
+        Ok(mask) => mask,
+        Err(_) => {
+            // Grammar is done or stopped — force EOS so generation halts cleanly.
+            let eos = ctx.tok_env.tok_trie().info().tok_eos;
+            for item in data.iter_mut() {
+                if item.id.cast_unsigned() != eos {
+                    item.logit = f32::NEG_INFINITY;
+                }
+            }
+            return;
+        }
     };
 
-    let data = unsafe { std::slice::from_raw_parts_mut(cur_p.data, cur_p.size) };
     for item in data.iter_mut() {
         if !mask.is_allowed(item.id.cast_unsigned()) {
             item.logit = f32::NEG_INFINITY;
