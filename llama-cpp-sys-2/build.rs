@@ -12,6 +12,7 @@ enum WindowsVariant {
 
 enum AppleVariant {
     MacOS,
+    WatchOS,
     Other,
 }
 
@@ -42,6 +43,8 @@ fn parse_target_os() -> Result<(TargetOs, String), String> {
     } else if target.contains("apple") {
         if target.ends_with("-apple-darwin") {
             Ok((TargetOs::Apple(AppleVariant::MacOS), target))
+        } else if target.contains("watchos") {
+            Ok((TargetOs::Apple(AppleVariant::WatchOS), target))
         } else {
             Ok((TargetOs::Apple(AppleVariant::Other), target))
         }
@@ -761,6 +764,12 @@ fn main() {
         config.define("GGML_CPU_ARM_ARCH", "armv8-a");
     }
 
+    // watchOS does not support Metal or Accelerate — override CMake's `if (APPLE)` auto-detection
+    if matches!(target_os, TargetOs::Apple(AppleVariant::WatchOS)) {
+        config.define("GGML_METAL", "OFF");
+        config.define("GGML_BLAS", "OFF");
+    }
+
     if cfg!(feature = "vulkan") {
         config.define("GGML_VULKAN", "ON");
         match target_os {
@@ -1065,9 +1074,11 @@ fn main() {
         }
         TargetOs::Apple(ref variant) => {
             println!("cargo:rustc-link-lib=framework=Foundation");
-            println!("cargo:rustc-link-lib=framework=Metal");
-            println!("cargo:rustc-link-lib=framework=MetalKit");
-            println!("cargo:rustc-link-lib=framework=Accelerate");
+            if !matches!(variant, AppleVariant::WatchOS) {
+                println!("cargo:rustc-link-lib=framework=Metal");
+                println!("cargo:rustc-link-lib=framework=MetalKit");
+                println!("cargo:rustc-link-lib=framework=Accelerate");
+            }
             println!("cargo:rustc-link-lib=c++");
 
             match variant {
