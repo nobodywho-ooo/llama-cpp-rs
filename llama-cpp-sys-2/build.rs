@@ -1092,7 +1092,7 @@ fn main() {
                         println!("cargo:rustc-link-search={}", path);
                     }
                 }
-                AppleVariant::Other => (),
+                AppleVariant::WatchOS | AppleVariant::Other => (),
             }
         }
         TargetOs::Android => {
