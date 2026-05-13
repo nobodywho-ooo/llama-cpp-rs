@@ -764,10 +764,14 @@ fn main() {
         config.define("GGML_CPU_ARM_ARCH", "armv8-a");
     }
 
-    // watchOS does not support Metal or Accelerate — override CMake's `if (APPLE)` auto-detection
+    // watchOS does not support Metal or Accelerate — override CMake's `if (APPLE)` auto-detection.
+    // Also define _DARWIN_C_SOURCE to make BSD types (u_int, u_char, etc.) available in
+    // watchOS SDK headers — they're guarded behind this macro unlike macOS/iOS.
     if matches!(target_os, TargetOs::Apple(AppleVariant::WatchOS)) {
         config.define("GGML_METAL", "OFF");
         config.define("GGML_BLAS", "OFF");
+        config.cflag("-D_DARWIN_C_SOURCE");
+        config.cxxflag("-D_DARWIN_C_SOURCE");
     }
 
     if cfg!(feature = "vulkan") {
