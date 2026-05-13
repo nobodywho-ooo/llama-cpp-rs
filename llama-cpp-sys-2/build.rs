@@ -764,10 +764,17 @@ fn main() {
         config.define("GGML_CPU_ARM_ARCH", "armv8-a");
     }
 
-    // watchOS does not support Metal or Accelerate — override CMake's `if (APPLE)` auto-detection
+    // watchOS does not support Metal — override CMake's `if (APPLE)` auto-detection.
+    // Accelerate/BLAS is available on watchOS so we leave that enabled.
+    // Also define _DARWIN_C_SOURCE so that BSD types (u_int, u_char, u_short) are available
+    // from <sys/types.h>. These types are guarded by:
+    //   #if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
+    // On macOS/iOS _DARWIN_C_SOURCE is set implicitly, but not on watchOS.
+    // Ref: https://github.com/apple/darwin-xnu/blob/main/bsd/sys/types.h
     if matches!(target_os, TargetOs::Apple(AppleVariant::WatchOS)) {
         config.define("GGML_METAL", "OFF");
-        config.define("GGML_BLAS", "OFF");
+        config.cflag("-D_DARWIN_C_SOURCE");
+        config.cxxflag("-D_DARWIN_C_SOURCE");
     }
 
     if cfg!(feature = "vulkan") {
@@ -1074,10 +1081,10 @@ fn main() {
         }
         TargetOs::Apple(ref variant) => {
             println!("cargo:rustc-link-lib=framework=Foundation");
+            println!("cargo:rustc-link-lib=framework=Accelerate");
             if !matches!(variant, AppleVariant::WatchOS) {
                 println!("cargo:rustc-link-lib=framework=Metal");
                 println!("cargo:rustc-link-lib=framework=MetalKit");
-                println!("cargo:rustc-link-lib=framework=Accelerate");
             }
             println!("cargo:rustc-link-lib=c++");
 
