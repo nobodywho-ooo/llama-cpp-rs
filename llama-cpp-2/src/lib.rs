@@ -31,6 +31,13 @@ pub mod llama_batch;
 pub(crate) mod llguidance_sampler;
 mod log;
 pub mod model;
+// mtmd module exists for all targets where the feature is on. On
+// wasm32-unknown-unknown the underlying C++ isn't compiled (miniaudio
+// dep is wasi-libc-incompatible), but the FFI declarations still exist
+// in bindings.rs and the Rust wrapper types compile. Any actual mtmd_*
+// call from wasm code resolves as a wasm import at link time — the JS
+// host can polyfill or, in practice, the wasm binding doesn't expose
+// multimodal so they're never called.
 #[cfg(feature = "mtmd")]
 pub mod mtmd;
 pub mod openai;

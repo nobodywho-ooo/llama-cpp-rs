@@ -813,6 +813,82 @@ impl LlamaModel {
         Ok(LlamaModel { model })
     }
 
+    /// Loads a model from an in-memory GGUF byte slice.
+    ///
+    /// Backed by llama.cpp's `llama_model_load_from_file_ptr` (which takes a
+    /// `FILE *`) plus a libc `fmemopen` to wrap the byte slice as a stream.
+    ///
+    /// Primarily intended for sandboxed environments without a filesystem —
+    /// notably WebAssembly. On native Linux/macOS it also works and is useful
+    /// for tests where the GGUF is already in memory.
+    ///
+    /// # Platform support
+    ///
+    /// Implemented on platforms with `fmemopen` in libc: Linux, macOS, iOS,
+    /// Android, wasi-libc. **Windows MSVC has no `fmemopen`** — calling this
+    /// on `*-windows-msvc` is a compile error today; the right fix there is a
+    /// temp-file fallback, but no caller needs it yet.
+    ///
+    /// The `bytes` slice must remain valid until the call returns — llama.cpp
+    /// fully reads the model during `llama_model_load_from_file_ptr` and does
+    /// not retain the `FILE *` after.
+    ///
+    /// # Errors
+    ///
+    /// See [`LlamaModelLoadError`].
+    #[cfg(not(all(target_os = "windows", target_env = "msvc")))]
+    #[tracing::instrument(skip_all, fields(bytes_len = bytes.len(), params))]
+    pub fn load_from_buffer(
+        _: &LlamaBackend,
+        bytes: &[u8],
+        params: &LlamaModelParams,
+    ) -> Result<Self, LlamaModelLoadError> {
+        use std::os::raw::{c_char, c_void};
+
+        // libc bindings declared inline to avoid pulling in the `libc` crate
+        // for a single function pair. `fmemopen` is POSIX.1-2008 and present
+        // on every libc we care about except Windows MSVC.
+        unsafe extern "C" {
+            fn fmemopen(buf: *mut c_void, size: usize, mode: *const c_char)
+                -> *mut llama_cpp_sys_2::FILE;
+            fn fclose(stream: *mut llama_cpp_sys_2::FILE) -> c_int;
+        }
+
+        // SAFETY: `bytes.as_ptr()` is valid for `bytes.len()` bytes for the
+        // duration of this function. `fmemopen` in "rb" mode does not write
+        // through the pointer despite the non-const signature; this is the
+        // documented contract.
+        let file = unsafe {
+            fmemopen(
+                bytes.as_ptr() as *mut c_void,
+                bytes.len(),
+                c"rb".as_ptr().cast::<c_char>(),
+            )
+        };
+        if file.is_null() {
+            return Err(LlamaModelLoadError::NullResult);
+        }
+
+        let llama_model = unsafe {
+            llama_cpp_sys_2::llama_model_load_from_file_ptr(file, params.params)
+        };
+
+        // Always close the FILE* regardless of whether load succeeded.
+        // `fclose` after `fmemopen` does not free the underlying buffer
+        // (we own it via `bytes`), so this is safe to call unconditionally.
+        let close_status = unsafe { fclose(file) };
+        if close_status != 0 {
+            tracing::warn!(
+                "fclose returned non-zero ({close_status}) after llama_model_load_from_file_ptr"
+            );
+        }
+
+        let model = NonNull::new(llama_model).ok_or(LlamaModelLoadError::NullResult)?;
+
+        tracing::debug!(bytes_len = bytes.len(), "Loaded model from buffer");
+        Ok(LlamaModel { model })
+    }
+
     /// Initializes a lora adapter from a file.
     ///
     /// # Errors
