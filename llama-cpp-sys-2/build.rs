@@ -456,10 +456,14 @@ fn detect_emscripten_root() -> String {
             }
         }
     }
-    // (3) Find emcc on PATH, follow symlinks, walk up. Check both `cmake/`
-    //     directly (emsdk layout: $EMSDK/upstream/emscripten/cmake/) and
-    //     `libexec/cmake/` (Homebrew layout: Cellar/emscripten/<v>/libexec/cmake/
-    //     while emcc lives at Cellar/emscripten/<v>/bin/emcc).
+    // (3) Find emcc on PATH, follow symlinks, walk up. Check several
+    //     candidate subdirectories under each ancestor since Emscripten
+    //     installs vary by packager:
+    //     - "" (emsdk layout: $EMSDK/upstream/emscripten/cmake/)
+    //     - "libexec" (Homebrew: Cellar/emscripten/<v>/libexec/cmake/
+    //       with emcc at Cellar/emscripten/<v>/bin/emcc)
+    //     - "share/emscripten" (Nix: /nix/store/<hash>-emscripten-<v>/
+    //       share/emscripten/cmake/ with emcc at bin/emcc)
     if let Ok(output) = Command::new("sh").arg("-c").arg("command -v emcc").output() {
         if output.status.success() {
             let emcc_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -467,7 +471,7 @@ fn detect_emscripten_root() -> String {
                 if let Ok(real) = std::fs::canonicalize(&emcc_path) {
                     let mut dir: Option<&Path> = real.parent();
                     while let Some(d) = dir {
-                        for sub in ["", "libexec"] {
+                        for sub in ["", "libexec", "share/emscripten"] {
                             let candidate = if sub.is_empty() {
                                 d.to_path_buf()
                             } else {
