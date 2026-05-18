@@ -26,6 +26,13 @@ enum TargetOs {
     /// libc, which the JS host polyfills (or wasm-bindgen + browser shim
     /// handle).
     WasmUnknown,
+    /// `wasm32-unknown-emscripten` built against Emscripten's libc.
+    /// Emscripten emits its own JS loader that handles all C/C++ runtime
+    /// imports (no separate WASI shim needed) and supports real pthreads
+    /// via Web Workers + SharedArrayBuffer. Tested with walkingeyerobot's
+    /// fork that adds `-sWASM_BINDGEN` so emcc invokes wasm-bindgen-cli
+    /// during link.
+    WasmEmscripten,
 }
 
 macro_rules! debug_log {
@@ -63,6 +70,11 @@ fn parse_target_os() -> Result<(TargetOs, String), String> {
         Ok((TargetOs::Android, target))
     } else if target.contains("linux") {
         Ok((TargetOs::Linux, target))
+    } else if target == "wasm32-unknown-emscripten" {
+        // Emscripten brings its own libc + JS loader; uses emcc instead of
+        // wasi-sdk's clang. Routed entirely separately from the WasmUnknown
+        // wasi-sdk path below.
+        Ok((TargetOs::WasmEmscripten, target))
     } else if target.starts_with("wasm32-") {
         // wasm32-unknown-unknown, wasm32-wasip1, wasm32-wasi*: all use the
         // wasi-sdk toolchain. The actual sysroot/target triple is resolved
@@ -101,8 +113,8 @@ fn extract_lib_names(out_dir: &Path, build_shared_libs: bool, target_os: &Target
             }
         }
         // wasm produces static .a archives only; BUILD_SHARED_LIBS is forced
-        // OFF for wasm in the cmake config below.
-        TargetOs::WasmUnknown => "*.a",
+        // OFF for both wasm paths in the cmake config below.
+        TargetOs::WasmUnknown | TargetOs::WasmEmscripten => "*.a",
     };
     let libs_dir = out_dir.join("lib*");
     let pattern = libs_dir.join(lib_pattern);
@@ -142,10 +154,10 @@ fn extract_lib_assets(out_dir: &Path, target_os: &TargetOs) -> Vec<PathBuf> {
         TargetOs::Windows(_) => "*.dll",
         TargetOs::Apple(_) => "*.dylib",
         TargetOs::Linux | TargetOs::Android => "*.so",
-        // No shared libraries on wasm — wasi-sdk produces static .a only.
-        // Return early so the caller gets an empty Vec rather than searching
-        // for shared assets that don't exist.
-        TargetOs::WasmUnknown => return Vec::new(),
+        // No shared libraries on wasm — wasi-sdk / emscripten both produce
+        // static .a only. Return early so the caller gets an empty Vec
+        // rather than searching for shared assets that don't exist.
+        TargetOs::WasmUnknown | TargetOs::WasmEmscripten => return Vec::new(),
     };
 
     let shared_libs_dir = match target_os {
@@ -215,20 +227,29 @@ fn validate_android_ndk(ndk_path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// In-place patch of llama.cpp to make `common/` build under wasi-libc.
+/// Surgical patches to llama.cpp's `common/` so it builds for either wasm
+/// target. Split into two helpers because the cpp-httplib excision applies
+/// to both wasi-sdk and Emscripten builds (no raw TCP sockets on either),
+/// but the `__wasi__` source-level branches in `common/common.cpp` only
+/// apply to the wasi-sdk build (Emscripten provides `<sys/resource.h>` +
+/// `PRIO_PROCESS` natively via its libc).
 ///
 /// llama.cpp's `common/` library is partially CLI-shaped: it pulls in
 /// cpp-httplib for HTTP, `console.cpp` for `termios.h`-driven terminal IO,
 /// `arg.cpp` for `sys/syslimits.h`-based argument parsing, etc. None of
-/// that compiles against wasi-libc, and the Rust bindings don't need any
-/// of those code paths (they're for `main`, `server`, and friends — not
-/// the library API).
+/// that compiles against wasi-libc (or against Emscripten in a browser
+/// context where raw sockets aren't available), and the Rust bindings
+/// don't need any of those code paths (they're for `main`, `server`, and
+/// friends — not the library API).
 ///
-/// This patch surgically removes the offending bits from llama.cpp's
-/// CMakeLists files. Each edit is idempotent (re-applying on a patched
-/// file is a no-op), and cargo's git checkout cache scopes the
-/// modification per-fork-commit so other builds aren't affected.
-fn patch_out_cpp_httplib(llama_src: &Path) {
+/// Each edit is idempotent (re-applying on a patched file is a no-op),
+/// and cargo's git checkout cache scopes the modification per-fork-commit
+/// so other builds aren't affected.
+
+/// Edits applied to both wasi-sdk and Emscripten builds: drop the
+/// cpp-httplib link entry and strip CLI/HTTP source files from
+/// `common/`.
+fn patch_drop_httplib(llama_src: &Path) {
     // 1. common/CMakeLists.txt: remove the `cpp-httplib` entry from the
     //    target_link_libraries block, and strip the source files in
     //    `common/` that include POSIX headers wasi-libc doesn't ship.
@@ -275,8 +296,14 @@ fn patch_out_cpp_httplib(llama_src: &Path) {
                 .expect("rewriting CMakeLists.txt failed");
         }
     }
+}
 
-    // 3. common/common.cpp: two source-level patches.
+/// Edits applied only to the wasi-sdk build: insert `__wasi__` arms into
+/// `fs_get_cache_directory` and `set_process_priority` in
+/// `common/common.cpp`. Emscripten's libc provides these natively so it
+/// falls through to the POSIX paths unchanged.
+fn patch_wasi_branches(llama_src: &Path) {
+    // common/common.cpp: two source-level patches.
     //
     //    (a) `fs_get_cache_directory()` has a chain of `#elif defined(...)`
     //    branches ending in `#error Unknown architecture`. There's no wasm32
@@ -399,6 +426,100 @@ fn configure_wasm_unknown_cc(build: &mut cc::Build) {
     // Same dance for <sys/resource.h> / getrusage / PRIO_PROCESS: enable
     // wasi-libc's wall-clock emulation. Link with -lwasi-emulated-process-clocks.
     build.flag("-D_WASI_EMULATED_PROCESS_CLOCKS");
+}
+
+/// Locate the Emscripten installation root (the directory that contains
+/// `cmake/Modules/Platform/Emscripten.cmake`). Probes (in order):
+///
+/// 1. `$EMSDK` env var (set by emsdk's emsdk_env.sh) — the upstream
+///    convention. Note: $EMSDK points at the emsdk root; the actual
+///    Emscripten install lives at `$EMSDK/upstream/emscripten/`.
+/// 2. `$EMSCRIPTEN_ROOT` env var (older convention some installs still
+///    set).
+/// 3. Walk up from `which emcc` until a directory contains the cmake
+///    toolchain file. Catches Homebrew (`/opt/homebrew/Cellar/emscripten/
+///    <version>/libexec/`) and Nix layouts.
+///
+/// Panics with an instructive message if none resolve.
+fn detect_emscripten_root() -> String {
+    // (1) and (2): explicit env vars.
+    for var in ["EMSDK", "EMSCRIPTEN_ROOT"] {
+        if let Ok(path) = env::var(var) {
+            let candidates = [
+                PathBuf::from(&path),
+                PathBuf::from(&path).join("upstream/emscripten"),
+            ];
+            for c in candidates {
+                if c.join("cmake/Modules/Platform/Emscripten.cmake").exists() {
+                    return c.to_string_lossy().into_owned();
+                }
+            }
+        }
+    }
+    // (3) Find emcc on PATH, follow symlinks, walk up. Check both `cmake/`
+    //     directly (emsdk layout: $EMSDK/upstream/emscripten/cmake/) and
+    //     `libexec/cmake/` (Homebrew layout: Cellar/emscripten/<v>/libexec/cmake/
+    //     while emcc lives at Cellar/emscripten/<v>/bin/emcc).
+    if let Ok(output) = Command::new("sh").arg("-c").arg("command -v emcc").output() {
+        if output.status.success() {
+            let emcc_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !emcc_path.is_empty() {
+                if let Ok(real) = std::fs::canonicalize(&emcc_path) {
+                    let mut dir: Option<&Path> = real.parent();
+                    while let Some(d) = dir {
+                        for sub in ["", "libexec"] {
+                            let candidate = if sub.is_empty() {
+                                d.to_path_buf()
+                            } else {
+                                d.join(sub)
+                            };
+                            if candidate
+                                .join("cmake/Modules/Platform/Emscripten.cmake")
+                                .exists()
+                            {
+                                return candidate.to_string_lossy().into_owned();
+                            }
+                        }
+                        dir = d.parent();
+                    }
+                }
+            }
+        }
+    }
+    panic!(
+        "Could not locate Emscripten installation. Set $EMSDK (emsdk's \
+         standard env var, populated by source ./emsdk_env.sh) or \
+         install Emscripten and put `emcc` on PATH. Looked for \
+         cmake/Modules/Platform/Emscripten.cmake."
+    );
+}
+
+/// Configure a cc::Build for `wasm32-unknown-emscripten`. The cc crate
+/// auto-runs emcc if it's on PATH for this target, but it also adds
+/// `-fno-exceptions` and other defaults that conflict with what
+/// llama.cpp's wrapper files need. Suppress defaults, then re-add only
+/// what we want.
+fn configure_emscripten_cc(build: &mut cc::Build) {
+    build.compiler("emcc");
+    build.cpp_link_stdlib(None);
+    build.no_default_flags(true);
+
+    let opt_level = env::var("OPT_LEVEL").unwrap_or_else(|_| "0".into());
+    build.flag(&format!("-O{opt_level}"));
+    build.flag("-ffunction-sections");
+    build.flag("-fdata-sections");
+    // Legacy exception model — matches Emscripten's prebuilt libc++ and
+    // mirrors the wasi-sdk path's reasoning (avoid mixing legacy and new
+    // exception handling instructions in the same module).
+    build.flag("-fexceptions");
+    build.flag("-fPIC");
+    // wasm SIMD128 for GGML quantization fast paths.
+    build.flag("-msimd128");
+    // pthreads support (Emscripten emulates pthreads as Web Workers +
+    // SharedArrayBuffer). Required so std::thread::spawn on the Rust side
+    // and llama.cpp's threading both work. The matching link flag (also
+    // -pthread) is added below in the link-args section.
+    build.flag("-pthread");
 }
 
 fn is_hidden(e: &DirEntry) -> bool {
@@ -655,6 +776,30 @@ fn main() {
             .clang_arg("-fvisibility=default");
     }
 
+    // Configure Emscripten bindgen settings: point clang at Emscripten's
+    // sysroot for headers (Emscripten ships its own libc/libcxx) and force
+    // default visibility (same wasm32-clang issue as the wasi-sdk path).
+    if matches!(target_os, TargetOs::WasmEmscripten) {
+        let root = detect_emscripten_root();
+        let sysroot = format!("{root}/cache/sysroot");
+        let candidate = PathBuf::from(&sysroot);
+        bindings_builder = bindings_builder
+            .clang_arg("--target=wasm32-unknown-emscripten")
+            .clang_arg("-fvisibility=default")
+            .clang_arg("-D__EMSCRIPTEN__");
+        // The sysroot path varies a bit between Emscripten installs
+        // (Homebrew puts it at libexec/cache/sysroot; emsdk under
+        // upstream/emscripten/cache/sysroot; sometimes the cache is
+        // populated lazily on first build). Only pass --sysroot if it
+        // actually exists; otherwise let clang fall back to its built-in
+        // resource paths (cc::Build via emcc will fill the gap at the
+        // compilation step regardless).
+        if candidate.exists() {
+            bindings_builder = bindings_builder
+                .clang_arg(format!("--sysroot={sysroot}"));
+        }
+    }
+
     // Fix bindgen header discovery on Windows MSVC
     // Use cc crate to discover MSVC include paths by compiling a dummy file
     if matches!(target_os, TargetOs::Windows(WindowsVariant::Msvc)) {
@@ -749,6 +894,10 @@ fn main() {
         configure_wasm_unknown_cc(&mut common_wrapper_build);
     }
 
+    if matches!(target_os, TargetOs::WasmEmscripten) {
+        configure_emscripten_cc(&mut common_wrapper_build);
+    }
+
     common_wrapper_build.compile("llama_cpp_sys_2_common_wrapper");
 
     // Build with Cmake
@@ -785,7 +934,7 @@ fn main() {
 
     // wasm targets don't use -march or x86/ARM feature flags — they have their
     // own SIMD model (wasm SIMD128 if enabled, scalar otherwise).
-    if matches!(target_os, TargetOs::WasmUnknown) {
+    if matches!(target_os, TargetOs::WasmUnknown | TargetOs::WasmEmscripten) {
         config.define("GGML_NATIVE", "OFF");
     } else if target_cpu == Some("native".into()) {
         debug_log!("Detected target-cpu=native, compiling with GGML_NATIVE");
@@ -996,7 +1145,8 @@ fn main() {
         //
         // Idempotent: each replace is a no-op if the file's already patched
         // (e.g. on a second rebuild that didn't bust cargo's git checkout).
-        patch_out_cpp_httplib(&llama_src);
+        patch_drop_httplib(&llama_src);
+        patch_wasi_branches(&llama_src);
 
         let sdk = detect_wasi_sdk_root();
         let sysroot = format!("{sdk}/share/wasi-sysroot");
@@ -1075,6 +1225,76 @@ fn main() {
         config.define("CMAKE_POSITION_INDEPENDENT_CODE", "ON");
     }
 
+    if matches!(target_os, TargetOs::WasmEmscripten) {
+        println!("cargo:rerun-if-env-changed=EMSDK");
+        println!("cargo:rerun-if-env-changed=EMSCRIPTEN_ROOT");
+
+        // Same cpp-httplib excision the wasi-sdk path needs: Emscripten
+        // can't do raw TCP sockets in browser contexts either, and the
+        // Rust bindings don't need any of the CLI/HTTP common/ sources
+        // anyway. Skip the wasi-specific `__wasi__` branches in
+        // common/common.cpp — Emscripten provides those POSIX paths
+        // (setpriority, /tmp, etc.) natively via its libc.
+        patch_drop_httplib(&llama_src);
+
+        let root = detect_emscripten_root();
+        let toolchain = format!("{root}/cmake/Modules/Platform/Emscripten.cmake");
+
+        // Use Emscripten's own CMake toolchain file: it sets CMAKE_C_COMPILER,
+        // CMAKE_CXX_COMPILER, sysroot, target triple, and the FIND_ROOT_PATH
+        // modes correctly. Avoids hand-rolling all of that (the wasi-sdk path
+        // above does it manually because there's no equivalent canonical
+        // toolchain file).
+        config.define("CMAKE_TOOLCHAIN_FILE", &toolchain);
+
+        // Disable GPU backends, shared libs, memory64, and other features
+        // that don't apply to wasm. Mostly mirrors the wasi-sdk block —
+        // duplicated rather than merged because the surrounding cmake
+        // configuration is different enough that a shared helper would
+        // need a lot of conditionals.
+        config.define("BUILD_SHARED_LIBS", "OFF");
+        config.define("GGML_VULKAN", "OFF");
+        config.define("GGML_CUDA", "OFF");
+        config.define("GGML_HIP", "OFF");
+        config.define("GGML_OPENCL", "OFF");
+        config.define("GGML_SYCL", "OFF");
+        config.define("GGML_KOMPUTE", "OFF");
+        config.define("GGML_RPC", "OFF");
+        config.define("GGML_METAL", "OFF");
+        config.define("GGML_ACCELERATE", "OFF");
+        config.define("GGML_LLAMAFILE", "OFF");
+        config.define("GGML_OPENMP", "OFF");
+        config.define("GGML_CPU_HBM", "OFF");
+        config.define("GGML_CPU", "ON");
+        config.define("LLAMA_WASM_MEM64", "OFF");
+
+        // No HTTP downloads or server, no tests/examples. mmap is partial
+        // under Emscripten (relies on MAP_FILE / fdatasync); load via
+        // fmemopen + fread instead, matching the wasm32-unknown-unknown
+        // codepath in core.
+        config.define("LLAMA_CURL", "OFF");
+        config.define("LLAMA_BUILD_SERVER", "OFF");
+        config.define("LLAMA_BUILD_TESTS", "OFF");
+        config.define("LLAMA_BUILD_EXAMPLES", "OFF");
+        config.define("LLAMA_MMAP", "OFF");
+
+        // C/CXX flags: wasm exceptions, PIC, SIMD128, pthreads. The
+        // toolchain file already sets --target/--sysroot; -pthread is what
+        // enables Emscripten's pthreads-via-Web-Workers and is required so
+        // find_package(Threads) succeeds and llama.cpp's threading
+        // compiles. The matching link flag is added in the link-args
+        // section below.
+        config.define(
+            "CMAKE_C_FLAGS",
+            "-fexceptions -fPIC -msimd128 -pthread -DGGML_USE_LLAMAFILE=0",
+        );
+        config.define(
+            "CMAKE_CXX_FLAGS",
+            "-fexceptions -fPIC -msimd128 -pthread -DGGML_USE_LLAMAFILE=0",
+        );
+        config.define("CMAKE_POSITION_INDEPENDENT_CODE", "ON");
+    }
+
     if matches!(target_os, TargetOs::Linux)
         && target_triple.contains("aarch64")
         && target_cpu != Some("native".into())
@@ -1148,7 +1368,10 @@ fn main() {
     // rather than modifying the defaults in Cargo.toml just in case someone enables the OpenMP feature
     // and tries to build for Android anyway.
     if cfg!(feature = "openmp")
-        && !matches!(target_os, TargetOs::Android | TargetOs::WasmUnknown)
+        && !matches!(
+            target_os,
+            TargetOs::Android | TargetOs::WasmUnknown | TargetOs::WasmEmscripten
+        )
     {
         config.define("GGML_OPENMP", "ON");
     } else {
@@ -1189,7 +1412,8 @@ fn main() {
     //
     // Skipped on wasm32-unknown-unknown — mtmd pulls in miniaudio which uses
     // pthread sched APIs wasi-libc doesn't ship; see the matching bindgen
-    // gate above.
+    // gate above. Emscripten *does* provide pthreads, so mtmd compiles
+    // there — included in the gate.
     if cfg!(feature = "mtmd") && !matches!(target_os, TargetOs::WasmUnknown) {
         let mtmd_src = llama_src.join("tools/mtmd");
         let mut mtmd_build = cc::Build::new();
@@ -1217,6 +1441,10 @@ fn main() {
 
         if matches!(target_os, TargetOs::WasmUnknown) {
             configure_wasm_unknown_cc(&mut mtmd_build);
+        }
+
+        if matches!(target_os, TargetOs::WasmEmscripten) {
+            configure_emscripten_cc(&mut mtmd_build);
         }
 
         // Collect all .cpp files in tools/mtmd and its subdirectories
@@ -1496,6 +1724,18 @@ fn main() {
             // rustc invokes wasm-ld directly (not through a compiler driver),
             // so this is passed as-is — no `-Wl,` prefix.
             println!("cargo:rustc-link-arg=--mexec-model=reactor");
+        }
+        TargetOs::WasmEmscripten => {
+            // rustc on wasm32-unknown-emscripten invokes emcc as the
+            // linker, which means emcc-level flags go through cargo:rustc-link-arg
+            // (no -Wl, prefix needed). Emscripten's libc/libcxx/runtime
+            // is auto-linked by emcc when we don't pass -nostdlib, so
+            // unlike the wasi-sdk path we don't need to list each
+            // library. The downstream crate (nobodywho-js) also adds
+            // emcc-level flags via its own build.rs — keep this set
+            // minimal: just the threading flag needed for the C/C++
+            // side's pthreads to link.
+            println!("cargo:rustc-link-arg=-pthread");
         }
         _ => (),
     }
