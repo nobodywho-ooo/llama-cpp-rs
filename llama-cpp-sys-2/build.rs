@@ -503,6 +503,12 @@ fn detect_emscripten_root() -> String {
 /// `-fno-exceptions` and other defaults that conflict with what
 /// llama.cpp's wrapper files need. Suppress defaults, then re-add only
 /// what we want.
+///
+/// Deliberately single-threaded — we don't pass `-pthread`. The
+/// matching reasoning is in the cmake block in main(): Emscripten
+/// pthreads conflict with wasm-bindgen-cli's thread-id injection. The
+/// JS host gets off-main-thread inference by spawning a Web Worker
+/// that imports the Emscripten loader, not by Rust spawning pthreads.
 fn configure_emscripten_cc(build: &mut cc::Build) {
     build.compiler("emcc");
     build.cpp_link_stdlib(None);
@@ -519,11 +525,6 @@ fn configure_emscripten_cc(build: &mut cc::Build) {
     build.flag("-fPIC");
     // wasm SIMD128 for GGML quantization fast paths.
     build.flag("-msimd128");
-    // pthreads support (Emscripten emulates pthreads as Web Workers +
-    // SharedArrayBuffer). Required so std::thread::spawn on the Rust side
-    // and llama.cpp's threading both work. The matching link flag (also
-    // -pthread) is added below in the link-args section.
-    build.flag("-pthread");
 }
 
 fn is_hidden(e: &DirEntry) -> bool {
@@ -1282,19 +1283,34 @@ fn main() {
         config.define("LLAMA_BUILD_EXAMPLES", "OFF");
         config.define("LLAMA_MMAP", "OFF");
 
-        // C/CXX flags: wasm exceptions, PIC, SIMD128, pthreads. The
-        // toolchain file already sets --target/--sysroot; -pthread is what
-        // enables Emscripten's pthreads-via-Web-Workers and is required so
-        // find_package(Threads) succeeds and llama.cpp's threading
-        // compiles. The matching link flag is added in the link-args
-        // section below.
+        // Fake-out find_package(Threads) in llama.cpp/ggml's CMakeLists:
+        // without `-pthread` the libc pthread test fails on Emscripten,
+        // but llama.cpp's threading code paths cfg-out cleanly when
+        // GGML_OPENMP=OFF (set above) and `n_threads=1`. Pre-populate the
+        // Threads_FOUND vars so find_package returns success without
+        // actually linking pthread.
+        config.define("THREADS_FOUND", "TRUE");
+        config.define("Threads_FOUND", "TRUE");
+        config.define("CMAKE_THREAD_LIBS_INIT", "");
+        config.define("CMAKE_HAVE_LIBC_PTHREAD", "TRUE");
+        config.define("CMAKE_USE_PTHREADS_INIT", "1");
+
+        // C/CXX flags: wasm exceptions, PIC, SIMD128. The toolchain file
+        // sets --target/--sysroot. We deliberately do NOT pass `-pthread`
+        // here — Emscripten with pthreads conflicts with wasm-bindgen-cli's
+        // own thread-id injection (wasm-bindgen looks for `__heap_base`,
+        // which Emscripten doesn't expose). Off-main-thread inference is
+        // instead achieved by the JS host spawning a Web Worker that
+        // imports the Emscripten loader; the wasm itself stays
+        // single-threaded inside that worker. Mirrors the wasm32-unknown-
+        // unknown (wasi-sdk) story.
         config.define(
             "CMAKE_C_FLAGS",
-            "-fexceptions -fPIC -msimd128 -pthread -DGGML_USE_LLAMAFILE=0",
+            "-fexceptions -fPIC -msimd128 -DGGML_USE_LLAMAFILE=0",
         );
         config.define(
             "CMAKE_CXX_FLAGS",
-            "-fexceptions -fPIC -msimd128 -pthread -DGGML_USE_LLAMAFILE=0",
+            "-fexceptions -fPIC -msimd128 -DGGML_USE_LLAMAFILE=0",
         );
         config.define("CMAKE_POSITION_INDEPENDENT_CODE", "ON");
     }
@@ -1414,11 +1430,18 @@ fn main() {
     // Using LLAMA_BUILD_TOOLS=ON would pull in all tools (batched-bench, quantize, etc.)
     // and their CMakeLists.txt files, which are not included in the crate package.
     //
-    // Skipped on wasm32-unknown-unknown — mtmd pulls in miniaudio which uses
-    // pthread sched APIs wasi-libc doesn't ship; see the matching bindgen
-    // gate above. Emscripten *does* provide pthreads, so mtmd compiles
-    // there — included in the gate.
-    if cfg!(feature = "mtmd") && !matches!(target_os, TargetOs::WasmUnknown) {
+    // Skipped on both wasm targets — mtmd pulls in miniaudio which uses
+    // pthread sched APIs. wasi-libc doesn't ship pthreads at all;
+    // Emscripten could but we deliberately avoid `-pthread` (it conflicts
+    // with wasm-bindgen-cli's own thread-id injection). Either way the
+    // C++ side can't compile, so the matching bindgen gate above keeps
+    // the Rust FFI declarations in scope without compiling C++.
+    if cfg!(feature = "mtmd")
+        && !matches!(
+            target_os,
+            TargetOs::WasmUnknown | TargetOs::WasmEmscripten
+        )
+    {
         let mtmd_src = llama_src.join("tools/mtmd");
         let mut mtmd_build = cc::Build::new();
         mtmd_build
@@ -1446,10 +1469,9 @@ fn main() {
         if matches!(target_os, TargetOs::WasmUnknown) {
             configure_wasm_unknown_cc(&mut mtmd_build);
         }
-
-        if matches!(target_os, TargetOs::WasmEmscripten) {
-            configure_emscripten_cc(&mut mtmd_build);
-        }
+        // Note: TargetOs::WasmEmscripten is excluded from the outer
+        // `if cfg!(feature = "mtmd") && ...` guard, so no Emscripten
+        // arm is needed here.
 
         // Collect all .cpp files in tools/mtmd and its subdirectories
         for entry in glob(mtmd_src.join("**/*.cpp").to_str().unwrap()).unwrap() {
@@ -1731,15 +1753,12 @@ fn main() {
         }
         TargetOs::WasmEmscripten => {
             // rustc on wasm32-unknown-emscripten invokes emcc as the
-            // linker, which means emcc-level flags go through cargo:rustc-link-arg
-            // (no -Wl, prefix needed). Emscripten's libc/libcxx/runtime
-            // is auto-linked by emcc when we don't pass -nostdlib, so
-            // unlike the wasi-sdk path we don't need to list each
-            // library. The downstream crate (nobodywho-js) also adds
-            // emcc-level flags via its own build.rs — keep this set
-            // minimal: just the threading flag needed for the C/C++
-            // side's pthreads to link.
-            println!("cargo:rustc-link-arg=-pthread");
+            // linker; emcc auto-links Emscripten's libc/libcxx/runtime
+            // when we don't pass -nostdlib, so unlike the wasi-sdk path
+            // we don't need to list each library here. No flags needed
+            // at this layer — the downstream crate (nobodywho-js)
+            // contributes the JS-emit / module-factory flags via its
+            // own build.rs.
         }
         _ => (),
     }
