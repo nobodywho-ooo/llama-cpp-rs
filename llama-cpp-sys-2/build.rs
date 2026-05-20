@@ -460,13 +460,11 @@ fn main() {
         .allowlist_type("llama_rs_.*")
         .prepend_enum_name(false);
 
-    // mtmd: include the headers in bindgen on ALL targets where the feature is
-    // on, so the FFI types/declarations exist in `bindings.rs`. We do NOT
-    // compile the C++ implementation on wasm32-unknown-unknown (miniaudio uses
-    // pthread sched APIs wasi-libc doesn't ship — see the cc::Build gate
-    // below). The Rust wrapper module in llama-cpp-2 stays buildable; calls
-    // into mtmd_* end up as wasm imports the JS host can polyfill (or
-    // realistically: never called from the wasm binding's surface).
+    // mtmd: include the headers in bindgen on ALL targets where the feature
+    // is on, so the FFI types/declarations exist in `bindings.rs`. The C++
+    // implementation is now compiled on Emscripten too (with miniaudio's
+    // playback paths stripped via `MA_NO_*` defines — see the cc::Build
+    // section below) so the `mtmd_*` symbols actually resolve.
     if cfg!(feature = "mtmd") {
         bindings_builder = bindings_builder
             .header("wrapper_mtmd.h")
@@ -1168,13 +1166,18 @@ fn main() {
     // Using LLAMA_BUILD_TOOLS=ON would pull in all tools (batched-bench, quantize, etc.)
     // and their CMakeLists.txt files, which are not included in the crate package.
     //
-    // Skipped on both wasm targets — mtmd pulls in miniaudio which uses
-    // pthread sched APIs. wasi-libc doesn't ship pthreads at all;
-    // Emscripten could but we deliberately avoid `-pthread` (it conflicts
-    // with wasm-bindgen-cli's own thread-id injection). Either way the
-    // C++ side can't compile, so the matching bindgen gate above keeps
-    // the Rust FFI declarations in scope without compiling C++.
-    if cfg!(feature = "mtmd") && !matches!(target_os, TargetOs::WasmEmscripten) {
+    // Emscripten note: mtmd-helper.cpp pulls in miniaudio for audio file
+    // decoding, and miniaudio's playback runtime references
+    // `pthread_setschedparam` at compile time. We don't enable pthreads in
+    // the wasm build (conflicts with wasm-bindgen-cli's thread-id
+    // injection). Instead we use miniaudio's documented `MA_NO_*` knobs
+    // below to compile only the decoder portion of miniaudio — the
+    // playback / device IO / threading / engine paths are all excluded,
+    // which removes the pthread references entirely. The decoder API
+    // (`ma_decoder_init_memory`, etc.) is pure CPU code that
+    // `mtmd-helper.cpp` uses to decode MP3/WAV/FLAC/Ogg blobs into PCM
+    // samples; that still works.
+    if cfg!(feature = "mtmd") {
         let mtmd_src = llama_src.join("tools/mtmd");
         let mut mtmd_build = cc::Build::new();
         mtmd_build
@@ -1199,9 +1202,22 @@ fn main() {
             mtmd_build.cpp_link_stdlib(None);
         }
 
-        // Note: TargetOs::WasmEmscripten is excluded from the outer
-        // `if cfg!(feature = "mtmd") && ...` guard above, so no
-        // wasm-specific arm is needed here.
+        // Emscripten: strip miniaudio down to "decoder only" — no pthreads,
+        // no playback, no engine. See block-comment above. These defines
+        // are checked into the upstream `vendor/miniaudio/miniaudio.h`
+        // header as `#ifndef MA_NO_<XYZ>` gates around the corresponding
+        // implementations, so the symbols simply don't exist in the
+        // compiled object files. `MA_NO_DEVICE_IO` is the load-bearing
+        // one: it drops the `ma_context` / `ma_device` machinery that
+        // owns the pthread-using audio thread.
+        if matches!(target_os, TargetOs::WasmEmscripten) {
+            mtmd_build.define("MA_NO_DEVICE_IO", None);
+            mtmd_build.define("MA_NO_THREADING", None);
+            mtmd_build.define("MA_NO_ENGINE", None);
+            mtmd_build.define("MA_NO_NODE_GRAPH", None);
+            mtmd_build.define("MA_NO_RESOURCE_MANAGER", None);
+            mtmd_build.define("MA_NO_GENERATION", None);
+        }
 
         // Collect all .cpp files in tools/mtmd and its subdirectories
         for entry in glob(mtmd_src.join("**/*.cpp").to_str().unwrap()).unwrap() {
