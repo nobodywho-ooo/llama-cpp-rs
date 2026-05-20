@@ -986,6 +986,17 @@ fn main() {
         // and the FIND_ROOT_PATH modes correctly.
         config.define("CMAKE_TOOLCHAIN_FILE", &toolchain);
 
+        // Force CMAKE_SYSTEM_PROCESSOR to "wasm32". Emscripten.cmake
+        // defaults EMSCRIPTEN_SYSTEM_PROCESSOR to "x86" if unset, which
+        // then becomes CMAKE_SYSTEM_PROCESSOR. ggml/src/ggml-cpu/
+        // CMakeLists.txt keys on `CMAKE_SYSTEM_PROCESSOR MATCHES "wasm"`
+        // to add ggml-cpu/arch/wasm/quants.c — the hand-tuned WASM
+        // SIMD128 dequant kernels for Q4_K_M / Q5_K_M / Q6_K / Q8_0.
+        // Without this override the build silently falls through to the
+        // generic-C scalar fallback, costing ~2× on quantized inference
+        // (mostly on the matmul hot path).
+        config.define("EMSCRIPTEN_SYSTEM_PROCESSOR", "wasm32");
+
         // Disable GPU backends, shared libs, memory64, and other
         // features that don't apply to wasm.
         config.define("BUILD_SHARED_LIBS", "OFF");
