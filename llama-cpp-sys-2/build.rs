@@ -1217,6 +1217,16 @@ fn main() {
             mtmd_build.define("MA_NO_NODE_GRAPH", None);
             mtmd_build.define("MA_NO_RESOURCE_MANAGER", None);
             mtmd_build.define("MA_NO_GENERATION", None);
+            // mtmd.cpp throws std::runtime_error on init/configuration
+            // failure paths. emcc defaults to `-fno-exceptions`, so we
+            // re-enable C++ exceptions just for these TUs. This matches
+            // the C build's behavior earlier in the file. Emscripten's
+            // legacy EH ABI emits `invoke_*` JS trampolines for each
+            // potentially-throwing call; for mtmd's small surface area
+            // (only thrown on bring-up failure) the overhead is irrelevant
+            // and the alternative (patching every throw to abort) would
+            // be a much bigger maintenance burden.
+            mtmd_build.flag("-fexceptions");
         }
 
         // Collect all .cpp files in tools/mtmd and its subdirectories
