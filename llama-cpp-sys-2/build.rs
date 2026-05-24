@@ -1175,8 +1175,10 @@ fn main() {
     // playback / device IO / threading / engine paths are all excluded,
     // which removes the pthread references entirely. The decoder API
     // (`ma_decoder_init_memory`, etc.) is pure CPU code that
-    // `mtmd-helper.cpp` uses to decode MP3/WAV/FLAC/Ogg blobs into PCM
-    // samples; that still works.
+    // `mtmd-helper.cpp` uses to decode WAV/MP3/FLAC blobs into PCM
+    // samples; that still works. (Ogg/Vorbis isn't routed through
+    // mtmd's `is_audio_file` magic-byte sniffer, so even though the
+    // miniaudio Ogg decoder is linked in, mtmd never invokes it.)
     if cfg!(feature = "mtmd") {
         let mtmd_src = llama_src.join("tools/mtmd");
         let mut mtmd_build = cc::Build::new();
