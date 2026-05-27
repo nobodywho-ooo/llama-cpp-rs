@@ -359,8 +359,7 @@ fn configure_emscripten_cc(build: &mut cc::Build) {
     build.flag(&format!("-O{opt_level}"));
     build.flag("-ffunction-sections");
     build.flag("-fdata-sections");
-    build.flag("-matomics");
-    build.flag("-mbulk-memory");
+    build.flag("-pthread");
     build.flag("-fexceptions");
     build.flag("-fPIC");
     build.flag("-msimd128");
@@ -1030,11 +1029,11 @@ fn main() {
 
         config.define(
             "CMAKE_C_FLAGS",
-            "-matomics -mbulk-memory -fexceptions -fPIC -msimd128 -DGGML_USE_LLAMAFILE=0",
+            "-pthread -fexceptions -fPIC -msimd128 -DGGML_USE_LLAMAFILE=0",
         );
         config.define(
             "CMAKE_CXX_FLAGS",
-            "-matomics -mbulk-memory -fexceptions -fPIC -msimd128 -DGGML_USE_LLAMAFILE=0",
+            "-pthread -fexceptions -fPIC -msimd128 -DGGML_USE_LLAMAFILE=0",
         );
         config.define("CMAKE_POSITION_INDEPENDENT_CODE", "ON");
     }
@@ -1198,8 +1197,7 @@ fn main() {
         // one: it drops the `ma_context` / `ma_device` machinery that
         // owns the pthread-using audio thread.
         if matches!(target_os, TargetOs::WasmEmscripten) {
-            mtmd_build.flag("-matomics");
-            mtmd_build.flag("-mbulk-memory");
+            mtmd_build.flag("-pthread");
             mtmd_build.define("MA_NO_DEVICE_IO", None);
             mtmd_build.define("MA_NO_THREADING", None);
             mtmd_build.define("MA_NO_ENGINE", None);

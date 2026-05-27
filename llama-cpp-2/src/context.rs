@@ -398,6 +398,26 @@ impl<'model> LlamaContext<'model> {
     pub fn print_memory_breakdown(&self) {
         unsafe { llama_cpp_sys_2::llama_memory_breakdown_print(self.context.as_ptr()) }
     }
+
+    /// Attach a persistent threadpool to this context. The threadpool
+    /// must outlive the context (caller is responsible for freeing it
+    /// after detaching or after the context is dropped).
+    ///
+    /// # Safety
+    ///
+    /// `threadpool` must be a valid pointer returned by
+    /// `ggml_threadpool_new` and must not be freed while attached.
+    pub unsafe fn attach_threadpool(
+        &mut self,
+        threadpool: *mut llama_cpp_sys_2::ggml_threadpool,
+        threadpool_batch: *mut llama_cpp_sys_2::ggml_threadpool,
+    ) {
+        llama_cpp_sys_2::llama_attach_threadpool(
+            self.context.as_ptr(),
+            threadpool,
+            threadpool_batch,
+        );
+    }
 }
 
 impl Drop for LlamaContext<'_> {
