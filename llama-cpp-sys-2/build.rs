@@ -350,11 +350,6 @@ fn detect_emscripten_root() -> String {
 /// llama.cpp's wrapper files need. Suppress defaults, then re-add only
 /// what we want.
 ///
-/// Deliberately single-threaded — we don't pass `-pthread`. The
-/// matching reasoning is in the cmake block in main(): Emscripten
-/// pthreads conflict with wasm-bindgen-cli's thread-id injection. The
-/// JS host gets off-main-thread inference by spawning a Web Worker
-/// that imports the Emscripten loader, not by Rust spawning pthreads.
 fn configure_emscripten_cc(build: &mut cc::Build) {
     build.compiler("emcc");
     build.cpp_link_stdlib(None);
@@ -364,12 +359,10 @@ fn configure_emscripten_cc(build: &mut cc::Build) {
     build.flag(&format!("-O{opt_level}"));
     build.flag("-ffunction-sections");
     build.flag("-fdata-sections");
-    // Legacy exception model — matches Emscripten's prebuilt libc++.
-    // Mixing legacy and new (-fwasm-exceptions) exception handling
-    // produces a wasm-validation error at module compile time.
+    build.flag("-matomics");
+    build.flag("-mbulk-memory");
     build.flag("-fexceptions");
     build.flag("-fPIC");
-    // wasm SIMD128 for GGML quantization fast paths.
     build.flag("-msimd128");
 }
 
@@ -1035,21 +1028,13 @@ fn main() {
         config.define("CMAKE_HAVE_LIBC_PTHREAD", "TRUE");
         config.define("CMAKE_USE_PTHREADS_INIT", "1");
 
-        // C/CXX flags: wasm exceptions, PIC, SIMD128. The toolchain file
-        // sets --target/--sysroot. We deliberately do NOT pass `-pthread`
-        // here — Emscripten with pthreads conflicts with wasm-bindgen-cli's
-        // own thread-id injection (wasm-bindgen looks for `__heap_base`,
-        // which Emscripten doesn't expose). Off-main-thread inference is
-        // instead achieved by the JS host spawning a Web Worker that
-        // imports the Emscripten loader; the wasm itself stays
-        // single-threaded inside that worker.
         config.define(
             "CMAKE_C_FLAGS",
-            "-fexceptions -fPIC -msimd128 -DGGML_USE_LLAMAFILE=0",
+            "-matomics -mbulk-memory -fexceptions -fPIC -msimd128 -DGGML_USE_LLAMAFILE=0",
         );
         config.define(
             "CMAKE_CXX_FLAGS",
-            "-fexceptions -fPIC -msimd128 -DGGML_USE_LLAMAFILE=0",
+            "-matomics -mbulk-memory -fexceptions -fPIC -msimd128 -DGGML_USE_LLAMAFILE=0",
         );
         config.define("CMAKE_POSITION_INDEPENDENT_CODE", "ON");
     }
@@ -1213,6 +1198,8 @@ fn main() {
         // one: it drops the `ma_context` / `ma_device` machinery that
         // owns the pthread-using audio thread.
         if matches!(target_os, TargetOs::WasmEmscripten) {
+            mtmd_build.flag("-matomics");
+            mtmd_build.flag("-mbulk-memory");
             mtmd_build.define("MA_NO_DEVICE_IO", None);
             mtmd_build.define("MA_NO_THREADING", None);
             mtmd_build.define("MA_NO_ENGINE", None);
