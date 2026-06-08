@@ -65,11 +65,22 @@ fn parse_target_os() -> Result<(TargetOs, String), String> {
         Ok((TargetOs::Android, target))
     } else if target.contains("linux") {
         Ok((TargetOs::Linux, target))
-    } else if target == "wasm32-unknown-emscripten" {
+    } else if target == "wasm32-unknown-emscripten" || target == "wasm64-unknown-emscripten" {
+        // wasm32 and wasm64 (MEMORY64) share the WasmEmscripten codepath;
+        // is_wasm64_emscripten() splits out the few flags that differ.
         Ok((TargetOs::WasmEmscripten, target))
     } else {
         Err(target)
     }
+}
+
+/// True when building for `wasm64-unknown-emscripten` (MEMORY64) rather than
+/// the 32-bit `wasm32-unknown-emscripten`. Drives `-sMEMORY64=1`, the 16 GiB
+/// heap, and `LLAMA_WASM_MEM64=ON` — applied only on the 64-bit build so the
+/// wasm32 path stays byte-for-byte unchanged. Reads CARGO_CFG_TARGET_ARCH
+/// (cargo derives it from the custom target spec's `"arch": "wasm64"`).
+fn is_wasm64_emscripten() -> bool {
+    env::var("CARGO_CFG_TARGET_ARCH").map(|a| a == "wasm64").unwrap_or(false)
 }
 
 fn get_cargo_target_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -344,12 +355,11 @@ fn detect_emscripten_root() -> String {
     );
 }
 
-/// Configure a cc::Build for `wasm32-unknown-emscripten`. The cc crate
-/// auto-runs emcc if it's on PATH for this target, but it also adds
-/// `-fno-exceptions` and other defaults that conflict with what
-/// llama.cpp's wrapper files need. Suppress defaults, then re-add only
-/// what we want.
-///
+/// Configure a cc::Build for the Emscripten wasm targets
+/// (`wasm32`/`wasm64-unknown-emscripten`). The cc crate auto-runs emcc if it's
+/// on PATH for this target, but it also adds `-fno-exceptions` and other
+/// defaults that conflict with what llama.cpp's wrapper files need. Suppress
+/// defaults, then re-add only what we want.
 fn configure_emscripten_cc(build: &mut cc::Build) {
     build.compiler("emcc");
     build.cpp_link_stdlib(None);
@@ -363,6 +373,12 @@ fn configure_emscripten_cc(build: &mut cc::Build) {
     build.flag("-fexceptions");
     build.flag("-fPIC");
     build.flag("-msimd128");
+    // wasm64 (MEMORY64): pointers are 64-bit, so every translation unit —
+    // these wrapper files included — must be compiled with -sMEMORY64=1, or
+    // the objects mismatch the 64-bit ABI and wasm-ld rejects the link.
+    if is_wasm64_emscripten() {
+        build.flag("-sMEMORY64=1");
+    }
 }
 
 fn is_hidden(e: &DirEntry) -> bool {
@@ -613,7 +629,11 @@ fn main() {
         let sysroot = format!("{root}/cache/sysroot");
         let candidate = PathBuf::from(&sysroot);
         bindings_builder = bindings_builder
-            .clang_arg("--target=wasm32-unknown-emscripten")
+            .clang_arg(if is_wasm64_emscripten() {
+                "--target=wasm64-unknown-emscripten"
+            } else {
+                "--target=wasm32-unknown-emscripten"
+            })
             .clang_arg("-fvisibility=default")
             .clang_arg("-D__EMSCRIPTEN__");
         // The sysroot path varies a bit between Emscripten installs
@@ -976,19 +996,23 @@ fn main() {
         // and the FIND_ROOT_PATH modes correctly.
         config.define("CMAKE_TOOLCHAIN_FILE", &toolchain);
 
-        // Force CMAKE_SYSTEM_PROCESSOR to "wasm32". Emscripten.cmake
+        // Force CMAKE_SYSTEM_PROCESSOR to "wasm32"/"wasm64". Emscripten.cmake
         // defaults EMSCRIPTEN_SYSTEM_PROCESSOR to "x86" if unset, which
         // then becomes CMAKE_SYSTEM_PROCESSOR. ggml/src/ggml-cpu/
         // CMakeLists.txt keys on `CMAKE_SYSTEM_PROCESSOR MATCHES "wasm"`
         // to add ggml-cpu/arch/wasm/quants.c — the hand-tuned WASM
         // SIMD128 dequant kernels for Q4_K_M / Q5_K_M / Q6_K / Q8_0.
-        // Without this override the build silently falls through to the
-        // generic-C scalar fallback, costing ~2× on quantized inference
-        // (mostly on the matmul hot path).
-        config.define("EMSCRIPTEN_SYSTEM_PROCESSOR", "wasm32");
+        // Both "wasm32" and "wasm64" match that regex, so the kernels are
+        // kept either way. Without this override the build silently falls
+        // through to the generic-C scalar fallback, costing ~2× on quantized
+        // inference (mostly on the matmul hot path).
+        config.define(
+            "EMSCRIPTEN_SYSTEM_PROCESSOR",
+            if is_wasm64_emscripten() { "wasm64" } else { "wasm32" },
+        );
 
-        // Disable GPU backends, shared libs, memory64, and other
-        // features that don't apply to wasm.
+        // Disable GPU backends, shared libs, and other features that don't
+        // apply to wasm. (memory64 is handled per-arch below.)
         config.define("BUILD_SHARED_LIBS", "OFF");
         config.define("GGML_VULKAN", "OFF");
         config.define("GGML_CUDA", "OFF");
@@ -1003,7 +1027,12 @@ fn main() {
         config.define("GGML_OPENMP", "OFF");
         config.define("GGML_CPU_HBM", "OFF");
         config.define("GGML_CPU", "ON");
-        config.define("LLAMA_WASM_MEM64", "OFF");
+        // memory64: ON only for the wasm64 target (16 GiB heap). The wasm32
+        // build keeps llama.cpp's default 4 GiB linear-memory model.
+        config.define(
+            "LLAMA_WASM_MEM64",
+            if is_wasm64_emscripten() { "ON" } else { "OFF" },
+        );
 
         // No HTTP downloads or server, no tests/examples. mmap is partial
         // under Emscripten (relies on MAP_FILE / fdatasync); load via
@@ -1027,14 +1056,18 @@ fn main() {
         config.define("CMAKE_HAVE_LIBC_PTHREAD", "TRUE");
         config.define("CMAKE_USE_PTHREADS_INIT", "1");
 
-        config.define(
-            "CMAKE_C_FLAGS",
-            "-pthread -fexceptions -fPIC -msimd128 -DGGML_USE_LLAMAFILE=0",
-        );
-        config.define(
-            "CMAKE_CXX_FLAGS",
-            "-pthread -fexceptions -fPIC -msimd128 -DGGML_USE_LLAMAFILE=0",
-        );
+        // wasm64 adds -sMEMORY64=1 so ggml/llama.cpp objects use the 64-bit
+        // pointer ABI; everything else matches the wasm32 build. Legacy
+        // -fexceptions EH (NOT -fwasm-exceptions, which would mismatch the
+        // prebuilt libc++ and fail wasm validation). -pthread stays for
+        // multi-threaded ggml.
+        let wasm_cflags = if is_wasm64_emscripten() {
+            "-pthread -fexceptions -fPIC -msimd128 -sMEMORY64=1 -DGGML_USE_LLAMAFILE=0"
+        } else {
+            "-pthread -fexceptions -fPIC -msimd128 -DGGML_USE_LLAMAFILE=0"
+        };
+        config.define("CMAKE_C_FLAGS", wasm_cflags);
+        config.define("CMAKE_CXX_FLAGS", wasm_cflags);
         config.define("CMAKE_POSITION_INDEPENDENT_CODE", "ON");
     }
 
@@ -1214,6 +1247,11 @@ fn main() {
             // and the alternative (patching every throw to abort) would
             // be a much bigger maintenance burden.
             mtmd_build.flag("-fexceptions");
+            // wasm64: match the 64-bit pointer ABI used by the rest of the
+            // build (see configure_emscripten_cc / CMAKE_*_FLAGS above).
+            if is_wasm64_emscripten() {
+                mtmd_build.flag("-sMEMORY64=1");
+            }
         }
 
         // Collect all .cpp files in tools/mtmd and its subdirectories
