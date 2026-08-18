@@ -510,10 +510,6 @@ impl LlamaSampler {
         let sampler = unsafe {
             llama_cpp_sys_2::llama_sampler_init_dry(
                 model.vocab_ptr(),
-                model
-                    .n_ctx_train()
-                    .try_into()
-                    .expect("n_ctx_train exceeds i32::MAX"),
                 multiplier,
                 base,
                 allowed_length,
@@ -528,13 +524,16 @@ impl LlamaSampler {
     /// Penalizes tokens for being present in the context.
     ///
     /// Parameters:
-    /// - ``penalty_last_n``: last n tokens to penalize (0 = disable penalty, -1 = context size)
-    /// - ``penalty_repeat``: 1.0 = disabled
-    /// - ``penalty_freq``: 0.0 = disabled
-    /// - ``penalty_present``: 0.0 = disabled
+    /// - ``n_vocab``: [`LlamaModel::n_vocab`]
+    /// - ``penalty_last_n``: last n tokens to penalize (0 = disable penalty). Negative values are
+    ///   clamped to 0; they no longer select the context size.
+    /// - ``penalty_repeat``: must be > 0.0, 1.0 = disabled
+    /// - ``penalty_freq``: must be finite, 0.0 = disabled
+    /// - ``penalty_present``: must be finite, 0.0 = disabled
     #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn penalties(
+        n_vocab: i32,
         penalty_last_n: i32,
         penalty_repeat: f32,
         penalty_freq: f32,
@@ -542,6 +541,7 @@ impl LlamaSampler {
     ) -> Self {
         let sampler = unsafe {
             llama_cpp_sys_2::llama_sampler_init_penalties(
+                n_vocab,
                 penalty_last_n,
                 penalty_repeat,
                 penalty_freq,
