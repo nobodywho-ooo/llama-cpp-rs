@@ -1,5 +1,4 @@
 use super::LogOptions;
-use std::sync::OnceLock;
 use tracing_core::{callsite, field, identify_callsite, Interest, Kind, Metadata};
 
 static FIELD_NAMES: &[&str] = &["message", "module"];
@@ -72,6 +71,8 @@ log_cs!(
 pub(super) enum Module {
     GGML,
     LlamaCpp,
+    /// Multimodal
+    Mtmd,
 }
 
 impl Module {
@@ -79,6 +80,7 @@ impl Module {
         match self {
             Module::GGML => "ggml",
             Module::LlamaCpp => "llama.cpp",
+            Module::Mtmd => "mtmd",
         }
     }
 }
@@ -276,9 +278,6 @@ impl State {
         tracing::dispatcher::get_default(|dispatcher| dispatcher.enabled(meta))
     }
 }
-
-pub(super) static LLAMA_STATE: OnceLock<Box<State>> = OnceLock::new();
-pub(super) static GGML_STATE: OnceLock<Box<State>> = OnceLock::new();
 
 #[cfg(test)]
 mod tests {
