@@ -165,6 +165,8 @@ static mut LLG_SAMPLER_I: llama_cpp_sys_2::llama_sampler_i = llama_cpp_sys_2::ll
     backend_accept: None,
     backend_apply: None,
     backend_set_input: None,
+    backend_reset: None,
+    copy_state: None,
 };
 
 /// Wraps an already-built [`llguidance::Matcher`] into a [`LlamaSampler`].
