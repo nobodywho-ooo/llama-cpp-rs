@@ -454,9 +454,14 @@ impl LlamaModelParams {
     /// this crate's public API still exposes.
     #[must_use]
     pub fn use_mmap(&self) -> bool {
+        // `LLAMA_LOAD_MODE_AUTO` generally translates to `use_mmap`.
+        // FIXME(madsmtm): Change this API to expose the load mode directly,
+        // instead of making it two methods.
         matches!(
             self.params.load_mode,
-            llama_cpp_sys_2::LLAMA_LOAD_MODE_MMAP | llama_cpp_sys_2::LLAMA_LOAD_MODE_MMAP_MLOCK
+            llama_cpp_sys_2::LLAMA_LOAD_MODE_AUTO
+                | llama_cpp_sys_2::LLAMA_LOAD_MODE_MMAP
+                | llama_cpp_sys_2::LLAMA_LOAD_MODE_MMAP_MLOCK
         )
     }
 
