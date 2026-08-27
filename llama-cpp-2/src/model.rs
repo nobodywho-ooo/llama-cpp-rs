@@ -889,10 +889,12 @@ impl LlamaModel {
 
         let mut sampler_configs: Vec<llama_cpp_sys_2::llama_sampler_seq_config> = samplers
             .iter()
-            .map(|(seq_id, sampler)| llama_cpp_sys_2::llama_sampler_seq_config {
-                seq_id: *seq_id,
-                sampler: sampler.sampler,
-            })
+            .map(
+                |(seq_id, sampler)| llama_cpp_sys_2::llama_sampler_seq_config {
+                    seq_id: *seq_id,
+                    sampler: sampler.sampler,
+                },
+            )
             .collect();
 
         if !sampler_configs.is_empty() {
@@ -905,7 +907,12 @@ impl LlamaModel {
         };
         let context = NonNull::new(context).ok_or(LlamaContextLoadError::NullReturn)?;
 
-        Ok(LlamaContext::with_samplers(self, context, params.embeddings(), samplers))
+        Ok(LlamaContext::with_samplers(
+            self,
+            context,
+            params.embeddings(),
+            samplers,
+        ))
     }
 
     /// Apply the models chat template to some messages.
