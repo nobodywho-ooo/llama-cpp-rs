@@ -35,7 +35,7 @@ jobs:
       - name: Fmt
         run: cargo fmt --check
       - name: Test
-        run: cargo test --features sampler
+        run: cargo test --features sampler,mtmd,llguidance
       - name: Dry-Run Publishing
         run: RUST_BACKTRACE=1 cargo publish --workspace --verbose --dry-run
   arm64:
@@ -70,7 +70,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Build
-        run: cargo build --features sampler
+        run: cargo build --features sampler,mtmd,llguidance
   windows:
     name: Check that it builds on windows
     runs-on: windows-latest
@@ -82,6 +82,6 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Build
-        run: cargo build --features sampler
+        run: cargo build --features sampler,mtmd,llguidance
       - name: Test
-        run: cargo test --features sampler
+        run: cargo test --features sampler,mtmd,llguidance
