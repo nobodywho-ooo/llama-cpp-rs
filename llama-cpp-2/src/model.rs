@@ -30,6 +30,7 @@ pub struct LlamaModel {
 }
 
 /// A safe wrapper around `llama_lora_adapter`.
+// FIXME(madsmtm): Loras hold a reference to the model they were constructed from.
 #[derive(Debug)]
 #[repr(transparent)]
 #[allow(clippy::module_name_repetitions)]

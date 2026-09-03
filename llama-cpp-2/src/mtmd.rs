@@ -688,6 +688,7 @@ impl MtmdInputChunks {
             unsafe { llama_cpp_sys_2::mtmd_input_chunks_get(self.chunks.as_ptr(), index) };
 
         // Note: We don't own this chunk, it's owned by the chunks collection
+        // FIXME(madsmtm): That means we need a lifetime on `MtmdInputChunk`.
         Ptr::new(chunk_ptr.cast_mut()).map(|ptr| MtmdInputChunk {
             chunk: ptr,
             owned: false,
