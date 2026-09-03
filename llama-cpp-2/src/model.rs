@@ -843,12 +843,12 @@ impl LlamaModel {
     ///
     /// See [`LlamaContextLoadError`].
     #[allow(clippy::needless_pass_by_value)]
-    pub fn new_context_with_ctx_other<'a>(
-        &'a self,
+    pub fn new_context_with_ctx_other<'m: 'r, 'o: 'r, 'r>(
+        &'m self,
         _: &LlamaBackend,
         params: LlamaContextParams,
-        ctx_other: &LlamaContext<'_>,
-    ) -> Result<LlamaContext<'a>, LlamaContextLoadError> {
+        ctx_other: &'o LlamaContext<'m>,
+    ) -> Result<LlamaContext<'r>, LlamaContextLoadError> {
         let mut context_params = params.context_params;
         // FIXME(madsmtm): Use `.as_ptr()` after:
         // https://github.com/ggml-org/llama.cpp/pull/28316
