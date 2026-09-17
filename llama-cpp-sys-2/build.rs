@@ -1293,6 +1293,13 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=mkl_rt");
     }
 
+    // MTMD depends on the hashing functionality.
+    if cfg!(feature = "mtmd") && !build_shared_libs {
+        let dir = build_dir.join("build").join("vendor").join("hash");
+        println!("cargo:rustc-link-search={}", dir.display());
+        println!("cargo:rustc-link-lib=static=vendor_hash");
+    }
+
     // Link libraries
     let llama_libs_kind = if build_shared_libs
         || (cfg!(feature = "system-ggml") && !cfg!(feature = "system-ggml-static"))
